@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Gacha Combinatorics Explorer</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --surface: #ffffff;
+    --surface-muted: #f1efe8;
+    --border: rgba(0, 0, 0, 0.1);
+    --border-strong: rgba(0, 0, 0, 0.25);
+    --text: #2c2c2a;
+    --text-muted: #5f5e5a;
+    --text-subtle: #888780;
+    --accent: #534AB7;
+    --accent-bg: #EEEDFE;
+    --good: #0F6E56;
+    --good-bg: #E1F5EE;
+    --warn: #BA7517;
+    --warn-bg: #FAEEDA;
+    --danger: #A32D2D;
+    --danger-bg: #FCEBEB;
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 32px 24px 64px;
+  }
+
+  header {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 0.5px solid var(--border);
+  }
+  header h1 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 500;
+  }
+  header p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .filter-panel {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    margin-bottom: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+  }
+  .filter-group label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 4px;
+  }
+  .filter-group select,
+  .filter-group input[type="text"] {
+    width: 100%;
+    padding: 7px 10px;
+    border: 0.5px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    font-family: inherit;
+    font-size: 13px;
+  }
+
+  .stats-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .stats-bar .count {
+    font-weight: 500;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btn-reset {
+    padding: 6px 12px;
+    border: 0.5px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-reset:hover { background: var(--surface-muted); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    font-size: 12.5px;
+  }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    background: var(--surface-muted);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border-bottom: 0.5px solid var(--border);
+    position: sticky;
+    top: 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  thead th:hover { background: #e8e6df; }
+  thead th::after {
+    content: '';
+    margin-left: 4px;
+    opacity: 0.4;
+  }
+  thead th.sort-asc::after { content: ' ↑'; opacity: 1; }
+  thead th.sort-desc::after { content: ' ↓'; opacity: 1; }
+
+  tbody tr {
+    border-bottom: 0.5px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  tbody tr:hover { background: var(--surface-muted); }
+  tbody tr:last-child { border-bottom: 0; }
+  tbody td {
+    padding: 10px 12px;
+    vertical-align: top;
+  }
+  tbody tr.expanded td {
+    background: var(--accent-bg);
+  }
+
+  .name-cell {
+    font-weight: 500;
+    color: var(--text);
+  }
+  .id-cell {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--text-subtle);
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .tag-good { background: var(--good-bg); color: var(--good); }
+  .tag-warn { background: var(--warn-bg); color: var(--warn); }
+  .tag-danger { background: var(--danger-bg); color: var(--danger); }
+  .tag-neutral { background: var(--surface-muted); color: var(--text-muted); }
+  .tag-accent { background: var(--accent-bg); color: var(--accent); }
+
+  .generosity-pips {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .pip {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--surface-muted);
+    border: 0.5px solid var(--border);
+  }
+  .pip.filled { background: var(--good); border-color: var(--good); }
+
+  .detail-row td {
+    padding: 16px 20px;
+    background: var(--accent-bg);
+    border-top: 0.5px solid var(--border);
+  }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
+  .detail-block h4 {
+    margin: 0 0 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  .detail-block p {
+    margin: 0 0 4px;
+    font-size: 13px;
+  }
+  .detail-block .small {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .no-results {
+    padding: 40px;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+  }
+
+  .footer-note {
+    margin-top: 24px;
+    font-size: 11px;
+    color: var(--text-subtle);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>Gacha Combinatorics Explorer</h1>
+  <p>All viable combinations of distribution model × banner structure × guarantee stack × currency model. Click a row for design notes.</p>
+</header>
+
+<div class="filter-panel">
+  <div class="filter-group">
+    <label>Search</label>
+    <input type="text" id="searchBox" placeholder="name, example, notes..." />
+  </div>
+  <div class="filter-group">
+    <label>Distribution</label>
+    <select id="filterDist"><option value="">All</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Banner</label>
+    <select id="filterBanner"><option value="">All</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Guarantee profile</label>
+    <select id="filterGuarantee"><option value="">All</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Currency</label>
+    <select id="filterCurrency"><option value="">All</option></select>
+  </div>
+  <div class="filter-group">
+    <label>Generosity tier</label>
+    <select id="filterGenerosity">
+      <option value="">All</option>
+      <option value="1">Harsh (1)</option>
+      <option value="2">Light (2)</option>
+      <option value="3">Balanced (3)</option>
+      <option value="4">Fair (4)</option>
+      <option value="5">Generous (5)</option>
+      <option value="6">Max generosity (6)</option>
+    </select>
+  </div>
+  <div class="filter-group">
+    <label>Risk / status</label>
+    <select id="filterRisk">
+      <option value="">All</option>
+      <option value="standard">Standard / well-trodden</option>
+      <option value="novel">Novel / experimental</option>
+      <option value="regulatory">Regulatory risk</option>
+      <option value="player-hate">Known player-hate pattern</option>
+    </select>
+  </div>
+</div>
+
+<div class="stats-bar">
+  <div>
+    Showing <span class="count" id="resultCount">0</span> of <span class="count" id="totalCount">0</span> combinations
+  </div>
+  <button class="btn-reset" onclick="resetFilters()">Reset filters</button>
+</div>
+
+<div id="tableWrap">
+  <table>
+    <thead>
+      <tr>
+        <th data-sort="name">Name</th>
+        <th data-sort="dist">Distribution</th>
+        <th data-sort="banner">Banner</th>
+        <th data-sort="guarantee">Guarantees</th>
+        <th data-sort="currency">Currency</th>
+        <th data-sort="generosity">Generosity</th>
+        <th data-sort="tag">Tag</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+</div>
+
+<div class="footer-note">
+  All valid combinations enumerated from 4 design axes. Invalid combinations (e.g., preview gacha with 50/50 rate-up) are automatically excluded.
+</div>
+
+</div>
+
+<script>
+// ============================================================
+// PRIMITIVES
+// ============================================================
+
+var distributions = [
+  { id: 'flat',      name: 'Flat',       desc: 'Fixed probabilities per pull, independent trials' },
+  { id: 'step_up',   name: 'Step-Up',    desc: 'Probabilities shift per consecutive roll within a cycle' },
+  { id: 'box',       name: 'Box',        desc: 'Finite pool, pulled items removed until reset' },
+  { id: 'preview',   name: 'Preview',    desc: 'Next N pulls revealed before commitment' },
+  { id: 'sugoroku',  name: 'Sugoroku',   desc: 'Pulls advance a pawn on a reward track' },
+  { id: 'wishlist',  name: 'Wishlist',   desc: 'Top-rarity pulls resolve to player-selected pool' }
+];
+
+var banners = [
+  { id: 'standard', name: 'Standard only',  desc: 'Permanent pool only, no featured' },
+  { id: 'limited',  name: 'Limited',        desc: 'Time-gated featured banner' },
+  { id: 'weapon',   name: 'Weapon/gear',    desc: 'Separate gear-focused pool' },
+  { id: 'fes',      name: 'Festival',       desc: 'Anniversary-tier doubled rates' },
+  { id: 'collab',   name: 'Collab',         desc: 'IP crossover, typically non-rerun' },
+  { id: 'dual',     name: 'Dual rate-up',   desc: 'Two simultaneous featured characters' }
+];
+
+var guarantees = [
+  { id: 'pure',        name: 'Pure RNG',           layers: [],                                                                            generosity: 1 },
+  { id: 'batch',       name: 'Batch floor',        layers: ['10x batch floor'],                                                           generosity: 2 },
+  { id: 'hard',        name: 'Hard pity',          layers: ['10x batch floor', 'Hard pity'],                                              generosity: 3 },
+  { id: 'soft',        name: 'Soft + Hard pity',   layers: ['10x batch floor', 'Hard pity', 'Soft pity ramp'],                            generosity: 4 },
+  { id: 'pity_5050',   name: 'Pity + 50/50',       layers: ['10x batch floor', 'Hard pity', 'Soft pity', '50/50 rate-up', 'Carry-over'],  generosity: 4 },
+  { id: 'pity_7030',   name: 'Pity + 70/30',       layers: ['10x batch floor', 'Hard pity', 'Soft pity', '70/30 rate-up', 'Carry-over'],  generosity: 5 },
+  { id: 'radiance',    name: 'Capturing Radiance', layers: ['10x batch floor', 'Hard pity', 'Soft pity', '55/45 adaptive', 'Carry-over'], generosity: 5 },
+  { id: 'spark_only',  name: 'Spark only',         layers: ['10x batch floor', 'Spark tickets'],                                          generosity: 4 },
+  { id: 'spark_pity',  name: 'Spark + Pity',       layers: ['10x batch floor', 'Hard pity', 'Soft pity', 'Spark tickets'],                generosity: 5 },
+  { id: 'shards',      name: 'Shard conversion',   layers: ['10x batch floor', 'Dupe-to-shards'],                                         generosity: 4 },
+  { id: 'shards_pity', name: 'Shards + Pity',      layers: ['10x batch floor', 'Hard pity', 'Soft pity', 'Dupe-to-shards'],               generosity: 5 },
+  { id: 'full_suite',  name: 'Full suite',         layers: ['10x batch floor', 'Hard pity', 'Soft pity', '50/50 + Radiance', 'Spark', 'Shards', 'Carry-over'], generosity: 6 }
+];
+
+var currencies = [
+  { id: 'single',  name: 'Single',         desc: 'One free currency, no paid/free split' },
+  { id: 'dual',    name: 'Dual',           desc: 'Free currency + Paid currency separated' },
+  { id: 'tickets', name: 'Banner tickets', desc: 'Per-banner locked ticket currency' }
+];
+
+// ============================================================
+// VALIDITY RULES
+// ============================================================
+
+function isValid(d, b, g, c) {
+  // Preview gacha removes surprise - rate-up guarantees are meaningless
+  if (d.id === 'preview') {
+    if (['pity_5050','pity_7030','radiance','full_suite'].indexOf(g.id) >= 0) return false;
+    if (c.id === 'tickets') return false;
+  }
+
+  // Box gacha empties the pool - spark is redundant
+  if (d.id === 'box') {
+    if (['spark_only','spark_pity','full_suite'].indexOf(g.id) >= 0) return false;
+  }
+
+  // Wishlist resolves to player choice - rate-up is incoherent
+  if (d.id === 'wishlist') {
+    if (['pity_5050','pity_7030','radiance'].indexOf(g.id) >= 0) return false;
+  }
+
+  // Rate-up guarantees require a featured banner
+  if (['pity_5050','pity_7030','radiance','full_suite'].indexOf(g.id) >= 0) {
+    if (b.id === 'standard') return false;
+  }
+
+  // Sugoroku's reward track IS the guarantee - full-suite on top is overkill/incoherent
+  if (d.id === 'sugoroku' && g.id === 'full_suite') return false;
+
+  // Collab banner + single currency = no serious game ships this
+  if (b.id === 'collab' && c.id === 'single') return false;
+
+  // Dual rate-up banner implies a featured context with rate-up guarantee
+  if (b.id === 'dual' && ['pure','batch','hard','soft','spark_only','shards'].indexOf(g.id) >= 0) return false;
+
+  // Weapon banner with "no mitigation at all" is too hostile to ever ship
+  if (b.id === 'weapon' && g.id === 'pure') return false;
+
+  return true;
+}
+
+// ============================================================
+// NAMING & ANNOTATION
+// ============================================================
+
+function generateName(d, b, g, c) {
+  var distPart = d.name;
+  var bannerPart = b.id === 'standard' ? 'Permanent' : b.name;
+  var guaranteePart = g.name;
+
+  // Some nice combinations get flavored names
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'pity_5050' && c.id === 'dual') return 'HoYoverse Standard';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'radiance' && c.id === 'dual') return 'Genshin 5.0+';
+  if (d.id === 'flat' && b.id === 'standard' && g.id === 'spark_only' && c.id === 'dual') return 'Granblue Classic';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'spark_pity' && c.id === 'dual') return 'Arknights Limited';
+  if (d.id === 'flat' && b.id === 'fes' && g.id === 'full_suite') return 'Anniversary Megabanner';
+  if (d.id === 'box' && b.id === 'standard' && g.id === 'batch') return 'Dragalia Box';
+  if (d.id === 'box' && b.id === 'fes') return 'Festival Box';
+  if (d.id === 'step_up' && b.id === 'limited' && g.id === 'spark_pity') return 'Sekai Step-Up';
+  if (d.id === 'step_up' && b.id === 'fes') return 'Festival Step-Up';
+  if (d.id === 'wishlist' && b.id === 'limited' && g.id === 'spark_pity') return 'Solo Leveling Model';
+  if (d.id === 'preview' && b.id === 'limited') return 'Transparent Reveal';
+  if (d.id === 'sugoroku') return 'Sugoroku Track';
+
+  return distPart + ' ' + bannerPart + ' / ' + guaranteePart;
+}
+
+function getTag(d, b, g, c) {
+  // Flag known player-hate patterns
+  if (g.id === 'pure' && b.id !== 'standard') return { text: 'Player-hate risk', cls: 'tag-danger' };
+  if (d.id === 'box' && g.id === 'pure') return { text: 'Player-hate risk', cls: 'tag-danger' };
+
+  // Regulatory risk patterns - Kompu-gacha-adjacent or very harsh
+  if (d.id === 'flat' && g.id === 'pure' && c.id === 'tickets') return { text: 'Regulatory risk', cls: 'tag-danger' };
+
+  // Experimental / novel combinations
+  if (d.id === 'sugoroku' && g.generosity >= 5) return { text: 'Novel', cls: 'tag-accent' };
+  if (d.id === 'preview' && g.id === 'spark_pity') return { text: 'Novel', cls: 'tag-accent' };
+  if (d.id === 'wishlist' && g.id === 'full_suite') return { text: 'Novel', cls: 'tag-accent' };
+  if (d.id === 'preview' && b.id === 'fes') return { text: 'Novel', cls: 'tag-accent' };
+  if (d.id === 'box' && b.id === 'limited' && g.id === 'pity_5050') return { text: 'Novel', cls: 'tag-accent' };
+  if (d.id === 'step_up' && b.id === 'collab') return { text: 'Novel', cls: 'tag-accent' };
+
+  // Very generous = F2P-friendly
+  if (g.generosity >= 5 && c.id !== 'tickets') return { text: 'F2P-friendly', cls: 'tag-good' };
+
+  // Whale-focused = no mitigation or weak mitigation + premium-only feel
+  if (g.generosity <= 2 && c.id === 'dual') return { text: 'Whale-focused', cls: 'tag-warn' };
+  if (g.generosity <= 2) return { text: 'Harsh', cls: 'tag-warn' };
+
+  return { text: 'Standard', cls: 'tag-neutral' };
+}
+
+function getExample(d, b, g, c) {
+  // Map known combinations to real games
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'pity_5050' && c.id === 'dual') return 'Honkai: Star Rail, ZZZ (pre-5.0 Genshin)';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'radiance' && c.id === 'dual') return 'Genshin Impact v5.0+';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'pity_7030' && c.id === 'dual') return 'Punishing: Gray Raven';
+  if (d.id === 'flat' && b.id === 'standard' && g.id === 'spark_only' && c.id === 'dual') return 'Granblue Fantasy, Nikke';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'spark_pity' && c.id === 'dual') return 'Arknights (limited banners)';
+  if (d.id === 'flat' && b.id === 'weapon' && g.id === 'pity_5050' && c.id === 'dual') return 'Genshin weapon (Epitomized Path)';
+  if (d.id === 'step_up' && b.id === 'fes' && g.id === 'full_suite') return 'Project Sekai Colorful Fes';
+  if (d.id === 'step_up' && b.id === 'limited' && g.id === 'spark_pity') return 'Project Sekai standard step-up';
+  if (d.id === 'box' && b.id === 'standard' && g.id === 'batch') return 'Dragalia Lost box banner (RIP)';
+  if (d.id === 'wishlist' && b.id === 'limited') return 'Solo Leveling: Arise (wishlist tier)';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'pure' && c.id === 'dual') return 'Fate/Grand Order (original)';
+  if (d.id === 'flat' && b.id === 'dual' && g.id === 'pity_5050') return 'Genshin Character Event Wish 1+2';
+  if (d.id === 'flat' && b.id === 'collab' && g.id === 'spark_pity') return 'Arknights × Rainbow Six, FGO collabs';
+  if (d.id === 'flat' && b.id === 'standard' && g.id === 'pure') return 'Early 2010s Japanese mobile';
+  if (d.id === 'flat' && b.id === 'fes' && g.id === 'pity_5050') return 'Blue Archive Fes, HSR Fes';
+  if (d.id === 'flat' && b.id === 'limited' && g.id === 'shards_pity') return 'Limbus Company, Epic Seven';
+  return '';
+}
+
+function getNotes(d, b, g, c) {
+  var notes = [];
+
+  // Distribution-specific notes
+  if (d.id === 'step_up') notes.push('Step-up works best with 8-10 roll cycles; longer feels like a treadmill.');
+  if (d.id === 'box') notes.push('Bounded completion — max whale spend is the pool cost. Good for completionists.');
+  if (d.id === 'preview') notes.push('Reveal mechanics trade monetization for regulatory safety. Monetization drops 20-40% typically.');
+  if (d.id === 'sugoroku') notes.push('Event-scale design only; high UI cost. Never the core system.');
+  if (d.id === 'wishlist') notes.push('Softens dupe pain massively. Best with rosters under 30 characters.');
+
+  // Guarantee notes
+  if (g.id === 'pure') notes.push('No mitigation at all — regulatory and retention risk in 2026+.');
+  if (g.id === 'pity_5050') notes.push('The genre-standard structure; players understand it immediately.');
+  if (g.id === 'radiance') notes.push('Adaptive 50/50 — compensates for consecutive losses. Player-friendly upgrade.');
+  if (g.id === 'spark_only') notes.push('No rate-up guarantee; whale clarity via spark threshold instead.');
+  if (g.id === 'shards') notes.push('Dupe conversion is the dominant QoL feature of 2024+ gachas.');
+  if (g.id === 'full_suite') notes.push('Maximum generosity. Works for giant Fes events, unsustainable as default.');
+
+  // Banner notes
+  if (b.id === 'weapon') notes.push('Weapon banners are typically the highest-grossing banner type — tune 50/50 cautiously.');
+  if (b.id === 'collab') notes.push('Collab banners drive D1 acquisition from the IP fanbase; usually non-rerun.');
+  if (b.id === 'dual') notes.push('Shared pity across two rate-ups effectively doubles a banner slot.');
+  if (b.id === 'fes') notes.push('Festival banners print money — reserve currency events around them.');
+
+  // Currency notes
+  if (c.id === 'tickets') notes.push('Banner-locked tickets create use-or-lose pressure.');
+  if (c.id === 'dual') notes.push('Free/paid split is near-universal for compliance with disclosure rules.');
+
+  return notes;
+}
+
+// ============================================================
+// ENUMERATION
+// ============================================================
+
+var combos = [];
+var id = 0;
+
+distributions.forEach(function(d) {
+  banners.forEach(function(b) {
+    guarantees.forEach(function(g) {
+      currencies.forEach(function(c) {
+        if (!isValid(d, b, g, c)) return;
+        id++;
+        combos.push({
+          id: id,
+          name: generateName(d, b, g, c),
+          dist: d,
+          banner: b,
+          guarantee: g,
+          currency: c,
+          generosity: g.generosity,
+          tag: getTag(d, b, g, c),
+          example: getExample(d, b, g, c),
+          notes: getNotes(d, b, g, c)
+        });
+      });
+    });
+  });
+});
+
+// ============================================================
+// FILTER POPULATION
+// ============================================================
+
+function populateFilter(id, list, field) {
+  var sel = document.getElementById(id);
+  list.forEach(function(item) {
+    var opt = document.createElement('option');
+    opt.value = item.id;
+    opt.textContent = item.name;
+    sel.appendChild(opt);
+  });
+}
+populateFilter('filterDist', distributions);
+populateFilter('filterBanner', banners);
+populateFilter('filterGuarantee', guarantees);
+populateFilter('filterCurrency', currencies);
+
+// ============================================================
+// RENDERING
+// ============================================================
+
+var state = {
+  search: '',
+  dist: '',
+  banner: '',
+  guarantee: '',
+  currency: '',
+  generosity: '',
+  risk: '',
+  sortBy: 'name',
+  sortDir: 'asc',
+  expanded: null
+};
+
+function getFiltered() {
+  return combos.filter(function(c) {
+    if (state.dist && c.dist.id !== state.dist) return false;
+    if (state.banner && c.banner.id !== state.banner) return false;
+    if (state.guarantee && c.guarantee.id !== state.guarantee) return false;
+    if (state.currency && c.currency.id !== state.currency) return false;
+    if (state.generosity && c.generosity !== parseInt(state.generosity)) return false;
+    if (state.risk) {
+      if (state.risk === 'standard' && c.tag.text !== 'Standard') return false;
+      if (state.risk === 'novel' && c.tag.text !== 'Novel') return false;
+      if (state.risk === 'regulatory' && c.tag.text !== 'Regulatory risk') return false;
+      if (state.risk === 'player-hate' && c.tag.text !== 'Player-hate risk') return false;
+    }
+    if (state.search) {
+      var q = state.search.toLowerCase();
+      var hay = (c.name + ' ' + c.example + ' ' + c.notes.join(' ') + ' ' + c.dist.desc + ' ' + c.banner.desc).toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+function sortCombos(arr) {
+  var dir = state.sortDir === 'asc' ? 1 : -1;
+  var by = state.sortBy;
+  return arr.slice().sort(function(a, b) {
+    var va, vb;
+    switch (by) {
+      case 'name': va = a.name; vb = b.name; break;
+      case 'dist': va = a.dist.name; vb = b.dist.name; break;
+      case 'banner': va = a.banner.name; vb = b.banner.name; break;
+      case 'guarantee': va = a.guarantee.name; vb = b.guarantee.name; break;
+      case 'currency': va = a.currency.name; vb = b.currency.name; break;
+      case 'generosity': return (a.generosity - b.generosity) * dir;
+      case 'tag': va = a.tag.text; vb = b.tag.text; break;
+      default: va = a.name; vb = b.name;
+    }
+    if (va < vb) return -1 * dir;
+    if (va > vb) return 1 * dir;
+    return 0;
+  });
+}
+
+function renderPips(n) {
+  var html = '<div class="generosity-pips" title="Generosity tier ' + n + '/6">';
+  for (var i = 0; i < 6; i++) {
+    html += '<span class="pip' + (i < n ? ' filled' : '') + '"></span>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderDetail(c) {
+  var layersHtml = c.guarantee.layers.length > 0
+    ? c.guarantee.layers.map(function(l) { return '<span class="tag tag-neutral" style="margin-right:4px; margin-bottom: 4px; display: inline-block;">' + l + '</span>'; }).join('')
+    : '<span class="small">None</span>';
+  var notesHtml = c.notes.length > 0
+    ? '<ul style="margin: 4px 0 0 16px; padding: 0;">' + c.notes.map(function(n) { return '<li style="margin-bottom: 4px; font-size: 12px;">' + n + '</li>'; }).join('') + '</ul>'
+    : '<p class="small">No design notes.</p>';
+  var example = c.example ? c.example : '<span class="small">No direct real-world analogue (or novel combination).</span>';
+
+  return '<tr class="detail-row"><td colspan="7">' +
+    '<div class="detail-grid">' +
+      '<div class="detail-block"><h4>Distribution</h4><p>' + c.dist.name + '</p><p class="small">' + c.dist.desc + '</p></div>' +
+      '<div class="detail-block"><h4>Banner</h4><p>' + c.banner.name + '</p><p class="small">' + c.banner.desc + '</p></div>' +
+      '<div class="detail-block"><h4>Currency</h4><p>' + c.currency.name + '</p><p class="small">' + c.currency.desc + '</p></div>' +
+      '<div class="detail-block"><h4>Guarantee layers</h4>' + layersHtml + '</div>' +
+      '<div class="detail-block"><h4>Real-world example</h4><p>' + example + '</p></div>' +
+      '<div class="detail-block" style="grid-column: 1 / -1;"><h4>Design notes</h4>' + notesHtml + '</div>' +
+    '</div>' +
+  '</td></tr>';
+}
+
+function render() {
+  var filtered = sortCombos(getFiltered());
+  document.getElementById('resultCount').textContent = filtered.length;
+  document.getElementById('totalCount').textContent = combos.length;
+
+  var body = document.getElementById('tableBody');
+  if (filtered.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" class="no-results">No combinations match these filters. Try resetting.</td></tr>';
+    return;
+  }
+
+  var html = filtered.map(function(c) {
+    var expanded = state.expanded === c.id;
+    var row = '<tr data-id="' + c.id + '"' + (expanded ? ' class="expanded"' : '') + '>' +
+      '<td class="name-cell">' + c.name + '<div class="id-cell">' + c.dist.id + ' · ' + c.banner.id + ' · ' + c.guarantee.id + ' · ' + c.currency.id + '</div></td>' +
+      '<td>' + c.dist.name + '</td>' +
+      '<td>' + c.banner.name + '</td>' +
+      '<td>' + c.guarantee.name + '</td>' +
+      '<td>' + c.currency.name + '</td>' +
+      '<td>' + renderPips(c.generosity) + '</td>' +
+      '<td><span class="tag ' + c.tag.cls + '">' + c.tag.text + '</span></td>' +
+    '</tr>';
+    if (expanded) row += renderDetail(c);
+    return row;
+  }).join('');
+  body.innerHTML = html;
+
+  // Wire up row clicks
+  body.querySelectorAll('tr[data-id]').forEach(function(tr) {
+    tr.addEventListener('click', function() {
+      var cid = parseInt(this.getAttribute('data-id'));
+      state.expanded = (state.expanded === cid) ? null : cid;
+      render();
+    });
+  });
+
+  // Update sort header indicators
+  document.querySelectorAll('thead th').forEach(function(th) {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (th.getAttribute('data-sort') === state.sortBy) {
+      th.classList.add(state.sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+// ============================================================
+// EVENTS
+// ============================================================
+
+document.getElementById('searchBox').addEventListener('input', function(e) {
+  state.search = e.target.value;
+  state.expanded = null;
+  render();
+});
+['filterDist','filterBanner','filterGuarantee','filterCurrency','filterGenerosity','filterRisk'].forEach(function(id) {
+  document.getElementById(id).addEventListener('change', function(e) {
+    var key = id.replace('filter','').toLowerCase();
+    state[key] = e.target.value;
+    state.expanded = null;
+    render();
+  });
+});
+document.querySelectorAll('thead th').forEach(function(th) {
+  th.addEventListener('click', function() {
+    var by = this.getAttribute('data-sort');
+    if (state.sortBy === by) {
+      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      state.sortBy = by;
+      state.sortDir = 'asc';
+    }
+    render();
+  });
+});
+
+function resetFilters() {
+  state.search = '';
+  state.dist = '';
+  state.banner = '';
+  state.guarantee = '';
+  state.currency = '';
+  state.generosity = '';
+  state.risk = '';
+  state.expanded = null;
+  document.getElementById('searchBox').value = '';
+  document.getElementById('filterDist').value = '';
+  document.getElementById('filterBanner').value = '';
+  document.getElementById('filterGuarantee').value = '';
+  document.getElementById('filterCurrency').value = '';
+  document.getElementById('filterGenerosity').value = '';
+  document.getElementById('filterRisk').value = '';
+  render();
+}
+window.resetFilters = resetFilters;
+
+// Initial render
+render();
+</script>
+
+</body>
+</html>
