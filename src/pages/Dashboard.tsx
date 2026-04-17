@@ -1,11 +1,48 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  combos, distributions, banners, guarantees, currencies,
+  distributions, banners, guarantees, currencies,
   type Combo,
 } from '../data/primitives';
+import { ALL_TYPES, combosForType, type GachaType } from '../data/types';
 
-type SortKey = 'name' | 'dist' | 'banner' | 'guarantee' | 'currency' | 'generosity' | 'tag';
+type SortKey = 'title' | 'mechanicFocus' | 'generosity' | 'variants';
+
+interface TypeRow {
+  type: GachaType;
+  variants: Combo[];
+  repCombo: Combo;           // representative combo (first variant)
+  maxGenerosity: number;     // highest generosity across variants
+  distNames: Set<string>;
+  bannerNames: Set<string>;
+  guaranteeNames: Set<string>;
+  currencyNames: Set<string>;
+  tagText: string;
+}
+
+function buildRows(): TypeRow[] {
+  return Object.values(ALL_TYPES).map(type => {
+    const variants = combosForType(type.key);
+    const rep = variants[0];
+    const distNames = new Set(variants.map(v => v.dist.name));
+    const bannerNames = new Set(variants.map(v => v.banner.name));
+    const guaranteeNames = new Set(variants.map(v => v.guarantee.name));
+    const currencyNames = new Set(variants.map(v => v.currency.name));
+    const maxGen = variants.reduce((m, v) => Math.max(m, v.generosity), 0);
+    // Most-common tag
+    const tagCounts = new Map<string, number>();
+    for (const v of variants) tagCounts.set(v.tag.text, (tagCounts.get(v.tag.text) ?? 0) + 1);
+    const tagText = [...tagCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    return {
+      type, variants, repCombo: rep,
+      maxGenerosity: maxGen,
+      distNames, bannerNames, guaranteeNames, currencyNames,
+      tagText,
+    };
+  });
+}
+
+const ROWS = buildRows();
 
 export default function Dashboard() {
   const [search, setSearch] = useState('');
@@ -14,33 +51,21 @@ export default function Dashboard() {
   const [guaranteeId, setGuaranteeId] = useState('');
   const [currencyId, setCurrencyId] = useState('');
   const [generosity, setGenerosity] = useState('');
-  const [risk, setRisk] = useState('');
-  const [sortBy, setSortBy] = useState<SortKey>('name');
+  const [category, setCategory] = useState<'' | 'named' | 'generic'>('');
+  const [sortBy, setSortBy] = useState<SortKey>('title');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const [onlyNamed, setOnlyNamed] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    let rows = combos.filter(c => {
-      if (distId && c.dist.id !== distId) return false;
-      if (bannerId && c.banner.id !== bannerId) return false;
-      if (guaranteeId && c.guarantee.id !== guaranteeId) return false;
-      if (currencyId && c.currency.id !== currencyId) return false;
-      if (generosity && c.generosity !== parseInt(generosity)) return false;
-      if (risk) {
-        if (risk === 'standard' && c.tag.text !== 'Standard') return false;
-        if (risk === 'novel' && c.tag.text !== 'Novel') return false;
-        if (risk === 'regulatory' && c.tag.text !== 'Regulatory risk') return false;
-        if (risk === 'player-hate' && c.tag.text !== 'Player-hate risk') return false;
-        if (risk === 'f2p' && c.tag.text !== 'F2P-friendly') return false;
-        if (risk === 'whale' && c.tag.text !== 'Whale-focused') return false;
-      }
-      if (onlyNamed) {
-        const generic = c.name.includes(' / ');
-        if (generic) return false;
-      }
+    let rows = ROWS.filter(r => {
+      if (category && r.type.category !== category) return false;
+      if (distId && !r.variants.some(v => v.dist.id === distId)) return false;
+      if (bannerId && !r.variants.some(v => v.banner.id === bannerId)) return false;
+      if (guaranteeId && !r.variants.some(v => v.guarantee.id === guaranteeId)) return false;
+      if (currencyId && !r.variants.some(v => v.currency.id === currencyId)) return false;
+      if (generosity && !r.variants.some(v => v.generosity === parseInt(generosity))) return false;
       if (q) {
-        const hay = `${c.name} ${c.example} ${c.notes.join(' ')} ${c.dist.desc} ${c.banner.desc} ${c.slug}`.toLowerCase();
+        const hay = `${r.type.title} ${r.type.subtitle} ${r.type.flavor} ${r.type.key} ${r.variants.map(v => v.name).join(' ')}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
@@ -50,42 +75,45 @@ export default function Dashboard() {
       let va: string | number;
       let vb: string | number;
       switch (sortBy) {
-        case 'dist': va = a.dist.name; vb = b.dist.name; break;
-        case 'banner': va = a.banner.name; vb = b.banner.name; break;
-        case 'guarantee': va = a.guarantee.name; vb = b.guarantee.name; break;
-        case 'currency': va = a.currency.name; vb = b.currency.name; break;
-        case 'generosity': va = a.generosity; vb = b.generosity; break;
-        case 'tag': va = a.tag.text; vb = b.tag.text; break;
-        default: va = a.name; vb = b.name;
+        case 'mechanicFocus': va = a.type.mechanicFocus; vb = b.type.mechanicFocus; break;
+        case 'generosity': va = a.maxGenerosity; vb = b.maxGenerosity; break;
+        case 'variants': va = a.variants.length; vb = b.variants.length; break;
+        default: va = a.type.title; vb = b.type.title;
       }
       if (va < vb) return -1 * dir;
       if (va > vb) return 1 * dir;
       return 0;
     });
     return rows;
-  }, [search, distId, bannerId, guaranteeId, currencyId, generosity, risk, sortBy, sortDir, onlyNamed]);
-
-  function toggleSort(key: SortKey) {
-    if (sortBy === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
-    else { setSortBy(key); setSortDir('asc'); }
-  }
+  }, [search, distId, bannerId, guaranteeId, currencyId, generosity, category, sortBy, sortDir]);
 
   function resetFilters() {
     setSearch(''); setDistId(''); setBannerId(''); setGuaranteeId('');
-    setCurrencyId(''); setGenerosity(''); setRisk(''); setOnlyNamed(false);
+    setCurrencyId(''); setGenerosity(''); setCategory('');
   }
+
+  const namedCount = ROWS.filter(r => r.type.category === 'named').length;
+  const genericCount = ROWS.filter(r => r.type.category === 'generic').length;
 
   return (
     <div className="page">
       <header className="page-header">
-        <h1>Gacha Dashboard</h1>
-        <p>{combos.length} valid combinations of 4 design axes. Click any card to play.</p>
+        <h1>Gacha Lab</h1>
+        <p>{ROWS.length} distinct gacha types · {namedCount} named flavors + {genericCount} generic buckets. Each card hand-crafted. Click to play; variants (banner/currency) are switchable inside.</p>
       </header>
 
       <div className="filter-panel">
         <div className="filter-group">
           <label>Search</label>
-          <input type="text" placeholder="name, slug, notes..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input type="text" placeholder="title, flavor, mechanic..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="filter-group">
+          <label>Category</label>
+          <select value={category} onChange={e => setCategory(e.target.value as '' | 'named' | 'generic')}>
+            <option value="">All</option>
+            <option value="named">Named flavors ({namedCount})</option>
+            <option value="generic">Generic buckets ({genericCount})</option>
+          </select>
         </div>
         <div className="filter-group">
           <label>Distribution</label>
@@ -95,28 +123,28 @@ export default function Dashboard() {
           </select>
         </div>
         <div className="filter-group">
-          <label>Banner</label>
+          <label>Banner (any variant)</label>
           <select value={bannerId} onChange={e => setBannerId(e.target.value)}>
             <option value="">All</option>
             {banners.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </div>
         <div className="filter-group">
-          <label>Guarantee profile</label>
+          <label>Guarantee (any variant)</label>
           <select value={guaranteeId} onChange={e => setGuaranteeId(e.target.value)}>
             <option value="">All</option>
             {guarantees.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
         </div>
         <div className="filter-group">
-          <label>Currency</label>
+          <label>Currency (any variant)</label>
           <select value={currencyId} onChange={e => setCurrencyId(e.target.value)}>
             <option value="">All</option>
             {currencies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div className="filter-group">
-          <label>Generosity tier</label>
+          <label>Generosity (max)</label>
           <select value={generosity} onChange={e => setGenerosity(e.target.value)}>
             <option value="">All</option>
             <option value="1">Harsh (1)</option>
@@ -128,37 +156,20 @@ export default function Dashboard() {
           </select>
         </div>
         <div className="filter-group">
-          <label>Tag</label>
-          <select value={risk} onChange={e => setRisk(e.target.value)}>
-            <option value="">All</option>
-            <option value="standard">Standard</option>
-            <option value="novel">Novel</option>
-            <option value="f2p">F2P-friendly</option>
-            <option value="whale">Whale-focused</option>
-            <option value="player-hate">Player-hate</option>
-            <option value="regulatory">Regulatory</option>
-          </select>
-        </div>
-        <div className="filter-group">
           <label>Sort</label>
-          <select value={sortBy} onChange={e => toggleSort(e.target.value as SortKey)}>
-            <option value="name">Name</option>
-            <option value="dist">Distribution</option>
-            <option value="banner">Banner</option>
-            <option value="guarantee">Guarantee</option>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value as SortKey)}>
+            <option value="title">Title</option>
+            <option value="mechanicFocus">Mechanic</option>
             <option value="generosity">Generosity</option>
-            <option value="tag">Tag</option>
+            <option value="variants">Variant count</option>
           </select>
         </div>
       </div>
 
       <div className="stats-bar">
         <div>
-          Showing <span className="count">{filtered.length}</span> of <span className="count">{combos.length}</span>
-          <label style={{ marginLeft: 18, fontSize: 12 }}>
-            <input type="checkbox" checked={onlyNamed} onChange={e => setOnlyNamed(e.target.checked)} style={{ marginRight: 6 }} />
-            Only named/flavored
-          </label>
+          Showing <span className="count">{filtered.length}</span> of <span className="count">{ROWS.length}</span> types
+          <span style={{ marginLeft: 12, color: 'var(--text-subtle)' }}>· {filtered.reduce((n, r) => n + r.variants.length, 0)} total variants</span>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost" onClick={() => setSortDir(sortDir === 'asc' ? 'desc' : 'asc')}>
@@ -169,39 +180,62 @@ export default function Dashboard() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="empty-state">No combinations match. Try resetting filters.</div>
+        <div className="empty-state">No types match. Try resetting filters.</div>
       ) : (
         <div className="combo-grid">
-          {filtered.map(c => <ComboCard key={c.id} combo={c} />)}
+          {filtered.map(r => <TypeCard key={r.type.key} row={r} />)}
         </div>
       )}
     </div>
   );
 }
 
-function ComboCard({ combo }: { combo: Combo }) {
+function TypeCard({ row }: { row: TypeRow }) {
+  const { type, variants, repCombo, maxGenerosity, bannerNames, currencyNames, tagText } = row;
+  const tagClass = tagClassFor(tagText);
   return (
-    <Link to={`/play/${combo.slug}`} className="combo-card">
-      <div className="name">{combo.name}</div>
-      <div className="slug">{combo.slug}</div>
+    <Link to={`/play/${repCombo.slug}`} className="combo-card" style={{ borderColor: `${type.accent}55` }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ fontWeight: 500, fontSize: 15, color: type.accent }}>{type.title}</div>
+        <span style={{ fontSize: 10.5, color: 'var(--text-subtle)', fontFamily: 'ui-monospace, Menlo, monospace', flexShrink: 0, whiteSpace: 'nowrap' }}>
+          {variants.length} variant{variants.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.4, minHeight: 32 }}>{type.subtitle}</div>
       <div className="axes">
-        <span className="tag tag-neutral">{combo.dist.name}</span>
-        <span className="tag tag-neutral">{combo.banner.name}</span>
-        <span className="tag tag-neutral">{combo.guarantee.name}</span>
-        <span className="tag tag-neutral">{combo.currency.name}</span>
+        <span className="tag tag-neutral" style={{ textTransform: 'capitalize' }}>{type.mechanicFocus}</span>
+        {bannerNames.size <= 2 && [...bannerNames].map(n => (
+          <span key={n} className="tag tag-neutral">{n}</span>
+        ))}
+        {bannerNames.size > 2 && <span className="tag tag-neutral">{bannerNames.size} banners</span>}
+        {currencyNames.size > 1 && <span className="tag tag-neutral">{currencyNames.size} currencies</span>}
       </div>
       <div className="bottom">
-        <span className={`tag ${combo.tag.cls}`}>{combo.tag.text}</span>
-        <Pips n={combo.generosity} />
+        <span className={`tag ${tagClass}`}>{tagText}</span>
+        <Pips n={maxGenerosity} accent={type.accent} />
       </div>
     </Link>
   );
 }
 
-function Pips({ n }: { n: number }) {
+function Pips({ n, accent }: { n: number; accent: string }) {
   return (
-    <div className="generosity-pips" title={`Generosity ${n}/6`}>
-      {Array.from({ length: 6 }).map((_, i) => <span key={i} className={'pip' + (i < n ? ' filled' : '')} />)}
+    <div className="generosity-pips" title={`Max generosity ${n}/6`}>
+      {Array.from({ length: 6 }).map((_, i) => (
+        <span key={i} className={'pip' + (i < n ? ' filled' : '')} style={i < n ? { background: accent, borderColor: accent } : undefined} />
+      ))}
     </div>
   );
+}
+
+function tagClassFor(tag: string): string {
+  switch (tag) {
+    case 'Player-hate risk':
+    case 'Regulatory risk': return 'tag-danger';
+    case 'Whale-focused':
+    case 'Harsh': return 'tag-warn';
+    case 'F2P-friendly': return 'tag-good';
+    case 'Novel': return 'tag-accent';
+    default: return 'tag-neutral';
+  }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { combos } from '../data/primitives';
+import { ALL_TYPES, combosForType } from '../data/types';
 
 type Tier = 'S' | 'A' | 'B' | 'C' | 'D' | 'unranked';
 const TIERS: { key: Tier; color: string; label: string }[] = [
@@ -13,7 +13,7 @@ const TIERS: { key: Tier; color: string; label: string }[] = [
 
 type Rankings = Record<Tier, string[]>;
 
-const STORAGE_KEY = 'gacha-tier-rankings-v1';
+const STORAGE_KEY = 'gacha-tier-rankings-v2';
 
 function loadRankings(): Rankings {
   try {
@@ -39,22 +39,21 @@ function saveRankings(r: Rankings) {
 
 export default function TierList() {
   const [rankings, setRankings] = useState<Rankings>(loadRankings);
-  const [filter, setFilter] = useState<'all' | 'named' | 'played'>('named');
-  const [dragSlug, setDragSlug] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'named' | 'generic'>('all');
+  const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<Tier | null>(null);
 
-  const allSlugs = useMemo(() => combos.map(c => c.slug), []);
-  const namedSlugs = useMemo(() => combos.filter(c => !c.name.includes(' / ')).map(c => c.slug), []);
+  const allKeys = useMemo(() => Object.keys(ALL_TYPES), []);
+  const namedKeys = useMemo(() => Object.values(ALL_TYPES).filter(t => t.category === 'named').map(t => t.key), []);
+  const genericKeys = useMemo(() => Object.values(ALL_TYPES).filter(t => t.category === 'generic').map(t => t.key), []);
 
-  // Reconcile: add any missing slugs to unranked based on filter.
   useEffect(() => {
     const inRankings = new Set(Object.values(rankings).flat());
-    const source = filter === 'all' ? allSlugs : filter === 'named' ? namedSlugs : namedSlugs;
-    const missing = source.filter(s => !inRankings.has(s));
+    const source = filter === 'all' ? allKeys : filter === 'named' ? namedKeys : genericKeys;
+    const missing = source.filter(k => !inRankings.has(k));
     if (missing.length > 0) {
       setRankings(r => ({ ...r, unranked: [...missing, ...r.unranked] }));
     }
-    // Keep only currently-visible items (don't wipe stored ranks).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
 
@@ -62,54 +61,61 @@ export default function TierList() {
     saveRankings(rankings);
   }, [rankings]);
 
-  function onDragStart(e: DragEvent<HTMLDivElement>, slug: string) {
-    setDragSlug(slug);
+  function onDragStart(e: DragEvent<HTMLDivElement>, key: string) {
+    setDragKey(key);
     e.dataTransfer.effectAllowed = 'move';
   }
   function onDragOver(e: DragEvent<HTMLDivElement>, tier: Tier) {
     e.preventDefault();
     setDropTarget(tier);
   }
-  function onDragLeave() {
-    setDropTarget(null);
-  }
+  function onDragLeave() { setDropTarget(null); }
   function onDrop(e: DragEvent<HTMLDivElement>, tier: Tier) {
     e.preventDefault();
-    if (!dragSlug) return;
+    if (!dragKey) return;
     setRankings(r => {
       const next: Rankings = { S: [...r.S], A: [...r.A], B: [...r.B], C: [...r.C], D: [...r.D], unranked: [...r.unranked] };
       for (const k of Object.keys(next) as Tier[]) {
-        next[k] = next[k].filter(s => s !== dragSlug);
+        next[k] = next[k].filter(s => s !== dragKey);
       }
-      next[tier].push(dragSlug);
+      next[tier].push(dragKey);
       return next;
     });
-    setDragSlug(null);
+    setDragKey(null);
     setDropTarget(null);
   }
 
   function resetAll() {
     if (!confirm('Clear all rankings?')) return;
-    const fresh: Rankings = { S: [], A: [], B: [], C: [], D: [], unranked: [...(filter === 'all' ? allSlugs : namedSlugs)] };
-    setRankings(fresh);
+    const source = filter === 'all' ? allKeys : filter === 'named' ? namedKeys : genericKeys;
+    setRankings({ S: [], A: [], B: [], C: [], D: [], unranked: [...source] });
   }
 
-  const visibleSet = filter === 'all' ? new Set(allSlugs) : new Set(namedSlugs);
+  const visibleSet = filter === 'all'
+    ? new Set(allKeys)
+    : filter === 'named'
+    ? new Set(namedKeys)
+    : new Set(genericKeys);
 
   return (
     <div className="page">
       <header className="page-header">
         <h1>Tier List</h1>
-        <p>Drag gachas into tiers. Rankings save automatically to your browser.</p>
+        <p>Rank the {allKeys.length} gacha types. Drag to tier, saves automatically to your browser.</p>
       </header>
 
       <div className="stats-bar">
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <label>
             <span style={{ color: 'var(--text-muted)', marginRight: 6 }}>Show:</span>
-            <select value={filter} onChange={e => setFilter(e.target.value as 'all' | 'named' | 'played')} style={{ padding: '4px 8px', background: 'var(--surface-muted)', color: 'var(--text)', border: '1px solid var(--border-strong)', borderRadius: 4 }}>
-              <option value="named">Named only ({combos.filter(c => !c.name.includes(' / ')).length})</option>
-              <option value="all">All combos ({combos.length})</option>
+            <select
+              value={filter}
+              onChange={e => setFilter(e.target.value as 'all' | 'named' | 'generic')}
+              style={{ padding: '4px 8px', background: 'var(--surface-muted)', color: 'var(--text)', border: '1px solid var(--border-strong)', borderRadius: 4 }}
+            >
+              <option value="all">All types ({allKeys.length})</option>
+              <option value="named">Named flavors ({namedKeys.length})</option>
+              <option value="generic">Generic buckets ({genericKeys.length})</option>
             </select>
           </label>
         </div>
@@ -118,7 +124,7 @@ export default function TierList() {
 
       <div className="tier-list">
         {TIERS.map(t => {
-          const items = rankings[t.key].filter(s => visibleSet.has(s));
+          const items = rankings[t.key].filter(k => visibleSet.has(k));
           return (
             <div key={t.key} className="tier-row" style={{ ['--tier-color' as never]: t.color } as React.CSSProperties}>
               <div className="tier-label">{t.label}</div>
@@ -129,8 +135,8 @@ export default function TierList() {
                 onDrop={(e) => onDrop(e, t.key)}
               >
                 {items.length === 0 ? (
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', padding: '8px 4px' }}>Drop gachas here</div>
-                ) : items.map(slug => <TierItem key={slug} slug={slug} onDragStart={onDragStart} dragging={dragSlug === slug} />)}
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', padding: '8px 4px' }}>Drop types here</div>
+                ) : items.map(key => <TierItem key={key} typeKey={key} onDragStart={onDragStart} dragging={dragKey === key} />)}
               </div>
             </div>
           );
@@ -138,7 +144,7 @@ export default function TierList() {
       </div>
 
       <div className="unranked-bar">
-        <h3>Unranked · {rankings.unranked.filter(s => visibleSet.has(s)).length}</h3>
+        <h3>Unranked · {rankings.unranked.filter(k => visibleSet.has(k)).length}</h3>
         <div
           className={'tier-items' + (dropTarget === 'unranked' ? ' drop-target' : '')}
           onDragOver={(e) => onDragOver(e, 'unranked')}
@@ -146,11 +152,11 @@ export default function TierList() {
           onDrop={(e) => onDrop(e, 'unranked')}
           style={{ padding: 0 }}
         >
-          {rankings.unranked.filter(s => visibleSet.has(s)).length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>All gachas have been ranked.</div>
+          {rankings.unranked.filter(k => visibleSet.has(k)).length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>All types ranked.</div>
           ) : rankings.unranked
-              .filter(s => visibleSet.has(s))
-              .map(slug => <TierItem key={slug} slug={slug} onDragStart={onDragStart} dragging={dragSlug === slug} />)
+              .filter(k => visibleSet.has(k))
+              .map(key => <TierItem key={key} typeKey={key} onDragStart={onDragStart} dragging={dragKey === key} />)
           }
         </div>
       </div>
@@ -158,18 +164,33 @@ export default function TierList() {
   );
 }
 
-function TierItem({ slug, onDragStart, dragging }: { slug: string; onDragStart: (e: DragEvent<HTMLDivElement>, slug: string) => void; dragging: boolean }) {
-  const combo = combos.find(c => c.slug === slug);
-  if (!combo) return null;
+function TierItem({ typeKey, onDragStart, dragging }: {
+  typeKey: string;
+  onDragStart: (e: DragEvent<HTMLDivElement>, key: string) => void;
+  dragging: boolean;
+}) {
+  const type = ALL_TYPES[typeKey];
+  if (!type) return null;
+  const variants = combosForType(typeKey);
+  const firstSlug = variants[0]?.slug;
   return (
     <div
       className={'tier-item' + (dragging ? ' dragging' : '')}
       draggable
-      onDragStart={(e) => onDragStart(e, slug)}
-      title={`${combo.dist.name} · ${combo.banner.name} · ${combo.guarantee.name} · ${combo.currency.name}`}
+      onDragStart={(e) => onDragStart(e, typeKey)}
+      title={`${type.subtitle} · ${variants.length} variants`}
+      style={{ borderColor: `${type.accent}66` }}
     >
-      <span>{combo.name}</span>
-      <Link to={`/play/${slug}`} onClick={(e) => e.stopPropagation()} style={{ fontSize: 10.5, color: 'var(--text-subtle)', marginLeft: 4 }}>↗</Link>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: type.accent, marginRight: 2 }} />
+      <span>{type.title}</span>
+      {firstSlug && (
+        <Link
+          to={`/play/${firstSlug}`}
+          onClick={(e) => e.stopPropagation()}
+          style={{ fontSize: 10.5, color: 'var(--text-subtle)', marginLeft: 4 }}
+          draggable={false}
+        >↗</Link>
+      )}
     </div>
   );
 }
