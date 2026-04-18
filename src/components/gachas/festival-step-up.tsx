@@ -33,26 +33,48 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
   const { state, lastResults } = eng;
   const featured = featuredFor(combo.banner.id);
 
+  const stepLen = 8;
+
+  // Force the engine's step-cycle length to 8 for this festival variant
+  // (engine default is 10; mismatch was desyncing the "NOW" indicator and
+  // suppressing the cycle-complete moment).
+  useEffect(() => {
+    state.stepLength = stepLen;
+    state.stepIndex = state.stepIndex % stepLen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [conf, setConf] = useState<{ id: number; x: number; color: string; rot: number; delay: number }[]>([]);
   const [rkey, setRkey] = useState(0);
   const [sparkle, setSparkle] = useState(false);
+  const [cycleFlash, setCycleFlash] = useState<number | null>(null);
   const idRef = useRef(0);
+  const prevStepIndex = useRef(state.stepIndex);
 
   useEffect(() => {
     if (eng.pullBurstKey === 0) return;
     setRkey(k => k + 1);
     const hadFive = lastResults.some(r => r.rarity === 5);
     setSparkle(hadFive);
+    // Detect cycle completion (stepIndex wrapped or passed 0 this pull batch).
+    const prev = prevStepIndex.current;
+    const now = state.stepIndex;
+    const wrapped = now <= prev && prev !== 0; // wrapped around 8 → 0..7
+    const cyclesDone = Math.floor(state.totalPulls / stepLen);
+    if (wrapped && cyclesDone > 0) {
+      setCycleFlash(cyclesDone);
+    }
+    prevStepIndex.current = now;
     const cols = [ACCENT, LAVENDER, MINT, LEMON, CORAL, GOLD];
-    const n = hadFive ? 40 : lastResults.length >= 10 ? 26 : 14;
-    const pcs = Array.from({ length: n }).map(() => ({ id: idRef.current++, x: Math.random() * 100, color: cols[Math.floor(Math.random() * cols.length)], rot: Math.random() * 360, delay: Math.random() * 150 }));
+    const nPieces = hadFive ? 40 : wrapped ? 30 : lastResults.length >= 10 ? 26 : 14;
+    const pcs = Array.from({ length: nPieces }).map(() => ({ id: idRef.current++, x: Math.random() * 100, color: cols[Math.floor(Math.random() * cols.length)], rot: Math.random() * 360, delay: Math.random() * 150 }));
     setConf(c => [...c, ...pcs]);
     const t1 = setTimeout(() => setConf(c => c.filter(p => !pcs.includes(p))), 2200);
     const t2 = setTimeout(() => setSparkle(false), 1800);
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [eng.pullBurstKey, lastResults]);
+    const t3 = setTimeout(() => setCycleFlash(null), 2400);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [eng.pullBurstKey, lastResults, state.stepIndex, state.totalPulls]);
 
-  const stepLen = 8;
   const curStep = state.stepIndex % stepLen;
   const next = STEPS[curStep];
   const usesShards = ['shards', 'shards_pity', 'full_suite'].includes(combo.guarantee.id);
@@ -97,6 +119,26 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
             <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ width: 340, height: 340, background: `radial-gradient(circle, ${GOLD}aa 0%, ${ACCENT}55 30%, transparent 70%)`, animation: 'fsu-sparkle 1.8s ease-out forwards' }} />
               <div style={{ position: 'absolute', fontSize: 92, fontWeight: 900, letterSpacing: 0.1, background: `linear-gradient(90deg, ${GOLD}, ${ACCENT})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', animation: 'fsu-sparkle-text 1.8s ease-out forwards', textShadow: `0 0 40px ${GOLD}` }}>★5</div>
+            </div>
+          )}
+
+          {cycleFlash !== null && (
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, pointerEvents: 'none', zIndex: 5, display: 'flex', justifyContent: 'center', paddingTop: 18 }}>
+              <div style={{
+                padding: '10px 22px',
+                background: `linear-gradient(90deg, ${CORAL}, ${ACCENT}, ${LAVENDER})`,
+                color: '#1f0a14',
+                borderRadius: 24,
+                fontWeight: 800,
+                fontSize: 14,
+                letterSpacing: 0.12,
+                textTransform: 'uppercase',
+                boxShadow: `0 0 30px ${ACCENT}aa, 0 6px 20px rgba(0,0,0,0.5)`,
+                border: `2px solid ${GOLD}`,
+                animation: 'fsu-cycle 2.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+              }}>
+                Cycle {cycleFlash} complete · loop restarts
+              </div>
             </div>
           )}
 
@@ -228,6 +270,9 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
             </div>
           </div>
 
+          <CurrencyCard currencyId={combo.currency.id} accent={ACCENT} />
+          <GuaranteeCard guaranteeId={combo.guarantee.id} accent={ACCENT} />
+
           <div className="meta-card">
             <h3 style={{ color: ACCENT }}>History · {state.history.length}</h3>
             {state.history.length === 0 ? (
@@ -347,4 +392,222 @@ const KF = `
 @keyframes fsu-btn { 0%{background-position:0% 50%}100%{background-position:200% 50%} }
 @keyframes fsu-spin { 0%{transform:rotate(0deg)}100%{transform:rotate(360deg)} }
 @keyframes fsu-ribbon { 0%{transform:translateX(0)}100%{transform:translateX(30vw)} }
+@keyframes fsu-cycle { 0%{transform:translateY(-60px) scale(.8);opacity:0}20%{transform:translateY(0) scale(1);opacity:1}75%{transform:translateY(0) scale(1);opacity:1}100%{transform:translateY(-40px) scale(.95);opacity:0} }
 `;
+
+// ---------------------------------------------------------------------------
+// CURRENCY + GUARANTEE EXPLAINER CARDS
+// Reusable mini reference panels. Explain what the player is actually signing up
+// for under the current variant selection. Plain language; no jargon.
+// ---------------------------------------------------------------------------
+
+const CURRENCY_COPY: Record<string, { title: string; short: string; body: string; pros: string[]; cons: string[] }> = {
+  single: {
+    title: 'Single currency',
+    short: 'One pool. No paid/free split.',
+    body: 'Every pull comes from one shared balance — free gifts, quest rewards, and cash purchases all convert into the same currency.',
+    pros: ['Simple to understand', 'No "which wallet" decisions', 'F2P and whales see the same UI'],
+    cons: ['Regulators dislike it — spend disclosure is murky', 'No accidental-spend protection', 'Rare in 2024+ games'],
+  },
+  dual: {
+    title: 'Dual currency',
+    short: 'Free currency + paid currency, tracked separately.',
+    body: 'Free pulls (from rewards, events) and paid pulls (from real-money purchases) use separate balances. Most modern gachas do this for legal disclosure and to make paid spend explicit.',
+    pros: ['Compliant with disclosure rules', 'Clear view of actual cash spent', 'Some banners allow only one or the other'],
+    cons: ['Slight UI friction — two balances to track', 'Free currency can feel second-class'],
+  },
+  tickets: {
+    title: 'Banner tickets',
+    short: 'Per-banner locked currency. Use it or lose it.',
+    body: 'Instead of (or in addition to) a shared wallet, each banner hands out event tickets that ONLY work on that banner. When the banner ends, unused tickets vanish.',
+    pros: ['Feels generous when earned', 'Drives engagement inside the event window'],
+    cons: ['Creates use-or-lose pressure', 'Can force pulls the player didn\'t really want', 'Regulatory grey-zone in some markets'],
+  },
+};
+
+function CurrencyCard({ currencyId, accent }: { currencyId: string; accent: string }) {
+  const info = CURRENCY_COPY[currencyId] ?? CURRENCY_COPY.single;
+  return (
+    <div className="meta-card">
+      <h3 style={{ color: accent }}>Currency · {info.title}</h3>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>{info.short}</div>
+      <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 }}>{info.body}</p>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11 }}>
+        <div>
+          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.08, color: 'var(--good)', marginBottom: 3, fontWeight: 700 }}>Pros</div>
+          <ul style={{ margin: 0, paddingLeft: 14, color: 'var(--text-muted)' }}>
+            {info.pros.map((p, i) => <li key={i} style={{ marginBottom: 2 }}>{p}</li>)}
+          </ul>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.08, color: 'var(--warn)', marginBottom: 3, fontWeight: 700 }}>Cons</div>
+          <ul style={{ margin: 0, paddingLeft: 14, color: 'var(--text-muted)' }}>
+            {info.cons.map((p, i) => <li key={i} style={{ marginBottom: 2 }}>{p}</li>)}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const GUARANTEE_COPY: Record<string, { title: string; short: string; layers: { name: string; explain: string }[]; summary: string }> = {
+  pure: {
+    title: 'Pure RNG',
+    short: 'No safety nets. Every pull is independent.',
+    layers: [],
+    summary: 'Base 5★ rate applies every pull. No pity, no floors, no rate-ups. You can pull 500 times and get nothing.',
+  },
+  batch: {
+    title: 'Batch floor',
+    short: 'Every 10-pull guarantees a 4★+.',
+    layers: [
+      { name: '10× batch floor', explain: 'Pulling 10 at once guarantees at least one 4★ (or better) in the batch.' },
+    ],
+    summary: 'The weakest mitigation — only the 4★ floor, nothing for 5★s. Early-2010s standard.',
+  },
+  hard: {
+    title: 'Hard pity',
+    short: 'Guaranteed 5★ at pull 90.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Hard pity', explain: 'If you hit 90 pulls without a 5★, the 90th pull IS a 5★ (random from the pool).' },
+    ],
+    summary: 'Hard ceiling but no help between — streaks of 50+ dry pulls still happen.',
+  },
+  soft: {
+    title: 'Soft + Hard pity',
+    short: 'Rates ramp up from pull 74, guaranteed at 90.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft pity', explain: 'From pull 74, 5★ rate ramps linearly from 0.6% up to ~32%.' },
+      { name: 'Hard pity', explain: 'If you somehow reach 90, 5★ is guaranteed.' },
+    ],
+    summary: 'The modern baseline. 5★s typically hit in the 74-80 range thanks to soft pity.',
+  },
+  pity_5050: {
+    title: 'Pity + 50/50 rate-up',
+    short: 'Genre-standard. 50/50 featured + carry-over.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: '50/50 rate-up', explain: 'When 5★ hits, 50% chance it\'s the featured unit; 50% it\'s random.' },
+      { name: 'Carry-over', explain: 'If you LOSE the 50/50, the next 5★ is GUARANTEED featured.' },
+    ],
+    summary: 'Worst case: 180 pulls for a guaranteed featured. Understood instantly by any HoYo player.',
+  },
+  pity_7030: {
+    title: 'Pity + 70/30',
+    short: 'Tilted 70/30 toward featured, with carry-over.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: '70/30 rate-up', explain: '70% chance the 5★ is featured, 30% it\'s random.' },
+      { name: 'Carry-over', explain: 'Losing the 30% guarantees next 5★ is featured.' },
+    ],
+    summary: 'Player-friendlier than 50/50. Used by Punishing: Gray Raven.',
+  },
+  radiance: {
+    title: 'Capturing Radiance',
+    short: 'Adaptive 50/50 that improves after losses.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: '55/45 adaptive', explain: 'Base 55% featured. Each time you lose, next rate-up gets +10% (up to 90%).' },
+      { name: 'Carry-over', explain: 'Losing still guarantees the NEXT 5★ is featured.' },
+    ],
+    summary: 'Genshin 5.0+ streakbreaker. You can still lose, but not over and over.',
+  },
+  spark_only: {
+    title: 'Spark only',
+    short: 'No rate-up. Spark at 300 pulls to pick any featured.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Spark tickets', explain: 'Every pull adds 1 to your spark counter. At 300, redeem for ANY featured unit of your choice.' },
+    ],
+    summary: 'Used by Granblue, Nikke. No probabilistic pity — just a deterministic 300-pull floor.',
+  },
+  spark_pity: {
+    title: 'Spark + Pity (dual ceiling)',
+    short: 'Both soft pity AND a 300-pull spark floor.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: 'Spark tickets', explain: 'At 300 pulls, redeem for any featured 5★.' },
+    ],
+    summary: 'Layered safety — probabilistic pity + deterministic spark. Arknights limited banners.',
+  },
+  shards: {
+    title: 'Shard conversion',
+    short: 'Duplicates convert to shards; craft any 5★.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Dupe-to-shards', explain: 'Pulling a 5★ you already own gives 25 shards. 80 shards = craft a featured 5★ directly.' },
+    ],
+    summary: 'Dupes never feel bad. QoL staple of 2024+ gachas (Limbus, Epic Seven).',
+  },
+  shards_pity: {
+    title: 'Shards + Pity',
+    short: 'Soft+hard pity plus dupe-to-shards conversion.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: 'Dupe-to-shards', explain: 'Dupes → 25 shards. 80 shards = craft a featured 5★.' },
+    ],
+    summary: 'Pity gives you 5★s; shards make sure no pull is wasted.',
+  },
+  full_suite: {
+    title: 'Full suite',
+    short: 'Every mitigation system stacked.',
+    layers: [
+      { name: '10× batch floor', explain: 'Every 10-pull gives at least one 4★.' },
+      { name: 'Soft + Hard pity', explain: 'Rate ramps from 74; guaranteed at 90.' },
+      { name: '50/50 + Radiance', explain: 'Adaptive 50/50 featured roll with streakbreaker.' },
+      { name: 'Spark tickets', explain: 'At 200-300 pulls, redeem for any featured 5★.' },
+      { name: 'Dupe-to-shards', explain: 'Dupes → shards → craft featured 5★.' },
+      { name: 'Carry-over', explain: 'Losing a 50/50 guarantees next 5★ is featured.' },
+    ],
+    summary: 'Anniversary-tier overkill. Maximum generosity — never sustainable as default.',
+  },
+};
+
+function GuaranteeCard({ guaranteeId, accent }: { guaranteeId: string; accent: string }) {
+  const info = GUARANTEE_COPY[guaranteeId] ?? GUARANTEE_COPY.pure;
+  return (
+    <div className="meta-card">
+      <h3 style={{ color: accent }}>Guarantee · {info.title}</h3>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>{info.short}</div>
+      {info.layers.length > 0 ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+          {info.layers.map((layer, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <span style={{
+                flexShrink: 0,
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: `${accent}33`,
+                color: accent,
+                border: `1px solid ${accent}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 10,
+                fontWeight: 700,
+                marginTop: 1,
+              }}>{i + 1}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{layer.name}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.45 }}>{layer.explain}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 10, fontStyle: 'italic' }}>No mitigation layers. Raw probability.</div>
+      )}
+      <div style={{ padding: 8, background: `${accent}15`, borderLeft: `3px solid ${accent}`, borderRadius: 4, fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+        {info.summary}
+      </div>
+    </div>
+  );
+}
