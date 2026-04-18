@@ -11,12 +11,16 @@ export interface Unit {
   image: string;
 }
 
+// Prefix asset paths with Vite's base URL so they work on GitHub Pages
+// (where the site is served from `/gachas/`, not `/`).
+const BASE = import.meta.env.BASE_URL;
+
 function mk(id: string, name: string, rarity: Rarity, color: string): Unit {
-  return { id, name, rarity, color, image: `/images/roster/${id}.svg` };
+  return { id, name, rarity, color, image: `${BASE}images/roster/${id}.svg` };
 }
 
 export function bannerImage(bannerId: string): string {
-  return `/images/banners/${bannerId}.jpg`;
+  return `${BASE}images/banners/${bannerId}.jpg`;
 }
 
 export const roster: Unit[] = [
