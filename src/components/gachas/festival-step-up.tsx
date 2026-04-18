@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { combosForType } from '../../data/types';
-import { featuredFor } from '../../data/roster';
+import { featuredFor, fiveStars, fourStars, type Unit } from '../../data/roster';
 import { useGachaEngine } from '../../lib/useGachaEngine';
 import type { Combo } from '../../data/primitives';
+import type { PullResult } from '../../engine/types';
 
 const ACCENT = '#FFB6E6';
 const LAVENDER = '#C4A6FF';
@@ -103,6 +104,130 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
     if (combo.currency.id === 'dual') setPaidBalance(p => p + 16000);
     if (combo.currency.id === 'tickets') { state.tickets += 100; }
     setFundsFlash(f => f + 1);
+  }
+
+  // ----- Step effect engine -----
+  // We wrap eng.pull10() so that each step:
+  //   1. charges the step's price multiplier from the right wallet
+  //   2. advances stepIndex by exactly 1 (engine advances by 10 per batch; we undo)
+  //   3. post-processes the last 10 results in state.history to apply the promised guarantee
+  //   4. renders those modified results via displayResults (replaces eng.lastResults in UI)
+
+  const [displayResults, setDisplayResults] = useState<PullResult[]>([]);
+  const [usedDisplay, setUsedDisplay] = useState(false);
+
+  function pickRandom4(): Unit {
+    return fourStars[Math.floor(Math.random() * fourStars.length)];
+  }
+  function pickFeatured4(): Unit | null {
+    const f = featured.four;
+    return f.length ? f[Math.floor(Math.random() * f.length)] : null;
+  }
+  function pickFeatured5(): Unit {
+    const f = featured.five;
+    return f[Math.floor(Math.random() * f.length)] ?? fiveStars[0];
+  }
+
+  function applyStepEffects(stepIdx: number, results: PullResult[]): PullResult[] {
+    const out = [...results];
+    switch (stepIdx) {
+      case 2: // Step 3 — guaranteed 4★+ in batch
+        if (!out.some(r => r.rarity >= 4)) {
+          const lastIdx = out.length - 1;
+          out[lastIdx] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4, batchFloor: true };
+        }
+        break;
+      case 3: // Step 4 — doubled featured rate (coin-flip each 4/5★ to featured)
+        for (let i = 0; i < out.length; i++) {
+          const r = out[i];
+          if (r.rarity === 5 && !r.rateUpHit && featured.five.length > 0 && Math.random() < 0.5) {
+            out[i] = { ...r, unit: pickFeatured5(), rateUpHit: true };
+          } else if (r.rarity === 4 && featured.four.length > 0 && Math.random() < 0.5) {
+            const f4 = pickFeatured4();
+            if (f4) out[i] = { ...r, unit: f4 };
+          }
+        }
+        break;
+      case 4: // Step 5 — guaranteed featured 5★
+        if (!out.some(r => r.rarity === 5 && r.rateUpHit)) {
+          const lastIdx = out.length - 1;
+          out[lastIdx] = { unit: pickFeatured5(), rarity: 5, rateUpHit: true, extra: { stepGuarantee: true } };
+        }
+        break;
+      case 5: // Step 6 — ×10 price, all 3★ promoted to 4★ (mega haul)
+        for (let i = 0; i < out.length; i++) {
+          if (out[i].rarity === 3) {
+            out[i] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4 };
+          }
+        }
+        break;
+      case 6: // Step 7 — bonus 4★ token (11th card)
+        out.push({ unit: pickFeatured4() ?? pickRandom4(), rarity: 4, extra: { bonusToken: true } });
+        break;
+      // Step 1, 2, 8 — no result modification (step 1's effect is pure cost)
+    }
+    return out;
+  }
+
+  function doStepPull10(wallet: 'free' | 'paid' | 'tickets') {
+    const stepIdx = state.stepIndex % stepLen;
+    const step = STEPS[stepIdx];
+    const engineCost = eng.pullCost * 10;
+    const stepCost = Math.round(engineCost * step.cost);
+    const ticketCost = Math.max(1, Math.round(10 * step.cost));
+
+    // Affordability check
+    if (wallet === 'free' && state.freeCurrency < stepCost) return;
+    if (wallet === 'paid' && paidBalance < stepCost) return;
+    if (wallet === 'tickets' && state.tickets < ticketCost) return;
+
+    // Charge the right wallet and compensate the engine's auto-deduction.
+    if (wallet === 'free') {
+      state.freeCurrency += engineCost - stepCost;
+      eng.pull10();
+    } else if (wallet === 'paid') {
+      setPaidBalance(p => p - stepCost);
+      state.freeCurrency += engineCost;
+      eng.pull10();
+    } else {
+      state.tickets -= ticketCost;
+      state.freeCurrency += engineCost;
+      eng.pull10();
+    }
+
+    // Undo engine's 10-step advancement; advance by 1 per batch (step semantics).
+    state.stepIndex = (stepIdx + 1) % stepLen;
+
+    // Post-process the last 10 entries in history to apply the step's guarantee.
+    const last = state.history.slice(-10);
+    const modified = applyStepEffects(stepIdx, last);
+    state.history.splice(-10, 10, ...modified);
+
+    // Re-sync derived counters so the step-guaranteed 5★ counts correctly.
+    state.fiveStarCount = state.history.filter(r => r.rarity === 5).length;
+    state.featuredObtained = state.history.filter(r => r.rarity === 5 && r.rateUpHit).length;
+
+    setDisplayResults(modified);
+    setUsedDisplay(true);
+  }
+
+  function doSinglePull(wallet: 'free' | 'tickets') {
+    const stepIdx = state.stepIndex % stepLen;
+
+    if (wallet === 'tickets') {
+      if (state.tickets < 1) return;
+      state.tickets -= 1;
+      state.freeCurrency += eng.pullCost;
+      eng.pull1();
+    } else {
+      if (state.freeCurrency < eng.pullCost) return;
+      eng.pull1();
+    }
+
+    // Single pulls don't progress the step cycle; undo engine's +1 advance.
+    state.stepIndex = stepIdx;
+    setDisplayResults(state.history.slice(-1));
+    setUsedDisplay(true);
   }
 
   return (
@@ -254,7 +379,7 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
             <CurrencyBadge currencyId={combo.currency.id} accent={ACCENT} gold={GOLD} />
 
             <div key={fundsFlash} style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6, animation: fundsFlash > 0 ? 'fsu-flash 600ms ease-out' : undefined }}>
-              <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />
+              {combo.currency.id !== 'tickets' && <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />}
               {combo.currency.id === 'dual' && <Pip label="Paid" value={paidBalance.toLocaleString()} color={GOLD} />}
               {combo.currency.id === 'tickets' && <Pip label="Tickets" value={state.tickets} color={CORAL} />}
               <Pip label="Pulls" value={state.totalPulls} color={LAVENDER} />
@@ -264,37 +389,74 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
               {usesShards && <Pip label="Shards" value={`${state.shards}/${state.shardsNeededForFive}`} color={LEMON} />}
             </div>
 
-            <div className="pull-row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <Btn disabled={!eng.canPull1} onClick={eng.pull1}>Pull 1 (free) · {eng.pullCost}</Btn>
-              <Btn primary disabled={!eng.canPull10} onClick={eng.pull10}>Pull 10 (free) · {(eng.pullCost * 10).toLocaleString()}</Btn>
-              {combo.currency.id === 'dual' && (
-                <Btn
-                  disabled={paidBalance < eng.pullCost * 10}
-                  onClick={() => { if (paidBalance >= eng.pullCost * 10) { setPaidBalance(p => p - eng.pullCost * 10); eng.pull10(); } }}
-                >Pull 10 (paid) · {(eng.pullCost * 10).toLocaleString()}</Btn>
-              )}
-              {combo.currency.id === 'tickets' && (
-                <Btn
-                  disabled={state.tickets < 10}
-                  onClick={() => { if (state.tickets >= 10) { state.tickets -= 10; eng.pull10(); } }}
-                >Pull 10 (tickets) · 10</Btn>
-              )}
-              {usesSpark && <Btn disabled={!eng.canSpark} onClick={eng.spark}>Spark ({state.sparkProgress}/{state.sparkThreshold})</Btn>}
-              {usesShards && <Btn disabled={!eng.canShards} onClick={eng.shards}>Craft ({state.shards}/{state.shardsNeededForFive})</Btn>}
-              <Btn primary onClick={addAllFunds}>
-                + Funds (+32k{combo.currency.id === 'dual' ? ' / +16k paid' : combo.currency.id === 'tickets' ? ' / +100 tickets' : ''})
-              </Btn>
-              <Btn onClick={() => { eng.reset(); prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); }}>Reset</Btn>
-            </div>
+            {(() => {
+              const curStepCost = STEPS[curStep].cost;
+              const engineCost10 = eng.pullCost * 10;
+              const stepCost10 = Math.round(engineCost10 * curStepCost);
+              const ticketCost10 = Math.max(1, Math.round(10 * curStepCost));
+              const costLabel = curStepCost === 0.5 ? `50% OFF · ${stepCost10.toLocaleString()}` : curStepCost === 10 ? `×10 · ${stepCost10.toLocaleString()}` : stepCost10.toLocaleString();
+              const ticketLabel = curStepCost === 0.5 ? `${ticketCost10} tickets (50% OFF)` : curStepCost === 10 ? `${ticketCost10} tickets (×10)` : `${ticketCost10} tickets`;
+              return (
+                <div className="pull-row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  {combo.currency.id === 'tickets' ? (
+                    <>
+                      <Btn
+                        disabled={state.tickets < 1}
+                        onClick={() => doSinglePull('tickets')}
+                      >Pull 1 (ticket) · 1</Btn>
+                      <Btn
+                        primary
+                        disabled={state.tickets < ticketCost10}
+                        onClick={() => doStepPull10('tickets')}
+                      >Step {curStep + 1} · Pull 10 · {ticketLabel}</Btn>
+                    </>
+                  ) : (
+                    <>
+                      <Btn disabled={state.freeCurrency < eng.pullCost} onClick={() => doSinglePull('free')}>Pull 1 (free) · {eng.pullCost}</Btn>
+                      <Btn primary disabled={state.freeCurrency < stepCost10} onClick={() => doStepPull10('free')}>
+                        Step {curStep + 1} · Pull 10 (free) · {costLabel}
+                      </Btn>
+                      {combo.currency.id === 'dual' && (
+                        <Btn
+                          disabled={paidBalance < stepCost10}
+                          onClick={() => doStepPull10('paid')}
+                        >Step {curStep + 1} · Pull 10 (paid) · {costLabel}</Btn>
+                      )}
+                    </>
+                  )}
+                  {usesSpark && <Btn disabled={!eng.canSpark} onClick={eng.spark}>Spark ({state.sparkProgress}/{state.sparkThreshold})</Btn>}
+                  {usesShards && <Btn disabled={!eng.canShards} onClick={eng.shards}>Craft ({state.shards}/{state.shardsNeededForFive})</Btn>}
+                  <Btn primary onClick={addAllFunds}>
+                    + Funds ({combo.currency.id === 'tickets' ? '+100 tickets' : combo.currency.id === 'dual' ? '+32k free / +16k paid' : '+32k'})
+                  </Btn>
+                  <Btn onClick={() => { eng.reset(); prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); setDisplayResults([]); setUsedDisplay(false); }}>Reset</Btn>
+                </div>
+              );
+            })()}
 
             <div key={eng.pullBurstKey} style={{ marginTop: 16 }}>
-              {lastResults.length === 0 ? (
-                <div style={{ padding: 20, color: 'var(--text-muted)', textAlign: 'center', fontStyle: 'italic' }}>Curtain rises. Pull to start the festival cycle.</div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
-                  {lastResults.map((r, i) => <FCard key={i} rarity={r.rarity} name={r.unit.name} color={r.unit.color} rateUpHit={!!r.rateUpHit} delay={i * 55} />)}
-                </div>
-              )}
+              {(() => {
+                const shown = usedDisplay ? displayResults : lastResults;
+                if (shown.length === 0) {
+                  return <div style={{ padding: 20, color: 'var(--text-muted)', textAlign: 'center', fontStyle: 'italic' }}>Curtain rises. Pull to start the festival cycle.</div>;
+                }
+                return (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
+                    {shown.map((r, i) => (
+                      <FCard
+                        key={i}
+                        rarity={r.rarity}
+                        name={r.unit.name}
+                        color={r.unit.color}
+                        rateUpHit={!!r.rateUpHit}
+                        bonusToken={!!(r.extra && (r.extra as { bonusToken?: boolean }).bonusToken)}
+                        stepGuarantee={!!(r.extra && (r.extra as { stepGuarantee?: boolean }).stepGuarantee)}
+                        delay={i * 55}
+                      />
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -373,7 +535,7 @@ function Btn({ children, onClick, disabled, primary }: { children: React.ReactNo
   );
 }
 
-function FCard({ rarity, name, color, rateUpHit, delay }: { rarity: number; name: string; color: string; rateUpHit: boolean; delay: number }) {
+function FCard({ rarity, name, color, rateUpHit, delay, bonusToken, stepGuarantee }: { rarity: number; name: string; color: string; rateUpHit: boolean; delay: number; bonusToken?: boolean; stepGuarantee?: boolean }) {
   const bg = rarity === 5 ? `linear-gradient(135deg, ${color} 0%, ${GOLD} 50%, ${ACCENT} 100%)` : rarity === 4 ? `linear-gradient(135deg, ${color} 0%, ${LAVENDER} 100%)` : `linear-gradient(135deg, ${color} 0%, #4a4a54 100%)`;
   return (
     <div style={{
@@ -392,7 +554,11 @@ function FCard({ rarity, name, color, rateUpHit, delay }: { rarity: number; name
           mixBlendMode: 'overlay',
         }} />
       )}
-      {rateUpHit && rarity === 5 && <div style={{ position: 'absolute', top: 6, right: 6, padding: '1px 6px', background: GOLD, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>FEATURED</div>}
+      <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }}>
+        {rateUpHit && rarity === 5 && <div style={{ padding: '1px 6px', background: GOLD, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>FEATURED</div>}
+        {stepGuarantee && <div style={{ padding: '1px 6px', background: CORAL, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>STEP 5</div>}
+        {bonusToken && <div style={{ padding: '1px 6px', background: MINT, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>BONUS</div>}
+      </div>
       <div style={{ fontSize: 12, fontWeight: 800, color: '#0f0e13', position: 'relative' }}>★{rarity}</div>
       <div style={{ fontSize: 13, fontWeight: 800, color: '#0f0e13', position: 'relative' }}>{name}</div>
     </div>
