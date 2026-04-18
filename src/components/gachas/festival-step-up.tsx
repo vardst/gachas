@@ -80,6 +80,34 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
   const usesShards = ['shards', 'shards_pity', 'full_suite'].includes(combo.guarantee.id);
   const usesSpark = ['spark_only', 'spark_pity', 'full_suite'].includes(combo.guarantee.id);
 
+  // Reset engine state whenever the active combo (banner / guarantee / currency)
+  // changes — otherwise switching variants silently inherits the old session
+  // and the UI appears unchanged.
+  const prevSlug = useRef(combo.slug);
+  const [paidBalance, setPaidBalance] = useState(0);
+  useEffect(() => {
+    if (prevSlug.current !== combo.slug) {
+      eng.reset();
+      state.stepLength = stepLen;
+      state.stepIndex = 0;
+      prevStepIndex.current = 0;
+      // Seed paid/ticket balances when entering those currency modes
+      if (combo.currency.id === 'dual') setPaidBalance(8000);
+      else if (combo.currency.id === 'tickets') { state.tickets = 50; setPaidBalance(0); }
+      else setPaidBalance(0);
+      prevSlug.current = combo.slug;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [combo.slug]);
+
+  // Seed paid balance on first mount too.
+  useEffect(() => {
+    if (combo.currency.id === 'dual' && paidBalance === 0 && state.totalPulls === 0) {
+      setPaidBalance(8000);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <div className="page">
       <style>{KF}</style>
@@ -226,8 +254,12 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
               </div>
             </div>
 
+            <CurrencyBadge currencyId={combo.currency.id} accent={ACCENT} gold={GOLD} />
+
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6 }}>
               <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />
+              {combo.currency.id === 'dual' && <Pip label="Paid" value={paidBalance.toLocaleString()} color={GOLD} />}
+              {combo.currency.id === 'tickets' && <Pip label="Tickets" value={state.tickets} color={CORAL} />}
               <Pip label="Pulls" value={state.totalPulls} color={LAVENDER} />
               <Pip label="5★" value={state.fiveStarCount} color={GOLD} />
               <Pip label="Featured" value={state.featuredObtained} color={CORAL} />
@@ -236,12 +268,24 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
             </div>
 
             <div className="pull-row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <Btn disabled={!eng.canPull1} onClick={eng.pull1}>Pull 1 · {eng.pullCost}</Btn>
-              <Btn primary disabled={!eng.canPull10} onClick={eng.pull10}>Pull 10 · {(eng.pullCost * 10).toLocaleString()}</Btn>
+              <Btn disabled={!eng.canPull1} onClick={eng.pull1}>Pull 1 (free) · {eng.pullCost}</Btn>
+              <Btn primary disabled={!eng.canPull10} onClick={eng.pull10}>Pull 10 (free) · {(eng.pullCost * 10).toLocaleString()}</Btn>
+              {combo.currency.id === 'dual' && (
+                <Btn
+                  disabled={paidBalance < eng.pullCost * 10}
+                  onClick={() => { if (paidBalance >= eng.pullCost * 10) { setPaidBalance(p => p - eng.pullCost * 10); eng.pull10(); } }}
+                >Pull 10 (paid) · {(eng.pullCost * 10).toLocaleString()}</Btn>
+              )}
+              {combo.currency.id === 'tickets' && (
+                <Btn
+                  disabled={state.tickets < 10}
+                  onClick={() => { if (state.tickets >= 10) { state.tickets -= 10; eng.pull10(); } }}
+                >Pull 10 (tickets) · 10</Btn>
+              )}
               {usesSpark && <Btn disabled={!eng.canSpark} onClick={eng.spark}>Spark ({state.sparkProgress}/{state.sparkThreshold})</Btn>}
               {usesShards && <Btn disabled={!eng.canShards} onClick={eng.shards}>Craft ({state.shards}/{state.shardsNeededForFive})</Btn>}
-              <Btn onClick={() => eng.addFunds()}>+ Funds</Btn>
-              <Btn onClick={eng.reset}>Reset</Btn>
+              <Btn onClick={() => { eng.addFunds(); if (combo.currency.id === 'dual') setPaidBalance(p => p + 8000); if (combo.currency.id === 'tickets') state.tickets += 50; }}>+ Funds</Btn>
+              <Btn onClick={() => { eng.reset(); state.stepLength = stepLen; prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); }}>Reset</Btn>
             </div>
 
             <div key={eng.pullBurstKey} style={{ marginTop: 16 }}>
@@ -424,6 +468,36 @@ const CURRENCY_COPY: Record<string, { title: string; short: string; body: string
     cons: ['Creates use-or-lose pressure', 'Can force pulls the player didn\'t really want', 'Regulatory grey-zone in some markets'],
   },
 };
+
+function CurrencyBadge({ currencyId, accent, gold }: { currencyId: string; accent: string; gold: string }) {
+  const info = CURRENCY_COPY[currencyId] ?? CURRENCY_COPY.single;
+  const color = currencyId === 'dual' ? gold : currencyId === 'tickets' ? '#FF8FB1' : accent;
+  return (
+    <div style={{
+      marginBottom: 12,
+      padding: '10px 14px',
+      background: `linear-gradient(90deg, ${color}22, transparent)`,
+      border: `1px solid ${color}66`,
+      borderRadius: 6,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+    }}>
+      <span style={{
+        padding: '3px 10px',
+        borderRadius: 10,
+        fontSize: 10.5,
+        fontWeight: 800,
+        letterSpacing: 0.1,
+        textTransform: 'uppercase',
+        background: color,
+        color: '#1f0a14',
+      }}>{info.title}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 180 }}>{info.short}</span>
+    </div>
+  );
+}
 
 function CurrencyCard({ currencyId, accent }: { currencyId: string; accent: string }) {
   const info = CURRENCY_COPY[currencyId] ?? CURRENCY_COPY.single;
