@@ -35,14 +35,14 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
 
   const stepLen = 8;
 
-  // Force the engine's step-cycle length to 8 for this festival variant
-  // (engine default is 10; mismatch was desyncing the "NOW" indicator and
-  // suppressing the cycle-complete moment).
-  useEffect(() => {
+  // Force the engine's step-cycle length to 8 for this festival variant.
+  // Run on every render so it also covers the fresh state produced by
+  // eng.reset() (which replaces stateRef.current with a new object that has
+  // the default stepLength=10).
+  if (state.stepLength !== stepLen) {
     state.stepLength = stepLen;
-    state.stepIndex = state.stepIndex % stepLen;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (state.stepIndex >= stepLen) state.stepIndex = state.stepIndex % stepLen;
+  }
 
   const [conf, setConf] = useState<{ id: number; x: number; color: string; rot: number; delay: number }[]>([]);
   const [rkey, setRkey] = useState(0);
@@ -84,29 +84,26 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
   // changes — otherwise switching variants silently inherits the old session
   // and the UI appears unchanged.
   const prevSlug = useRef(combo.slug);
-  const [paidBalance, setPaidBalance] = useState(0);
+  const [paidBalance, setPaidBalance] = useState(combo.currency.id === 'dual' ? 8000 : 0);
+  const [fundsFlash, setFundsFlash] = useState(0);
   useEffect(() => {
     if (prevSlug.current !== combo.slug) {
       eng.reset();
-      state.stepLength = stepLen;
-      state.stepIndex = 0;
       prevStepIndex.current = 0;
-      // Seed paid/ticket balances when entering those currency modes
       if (combo.currency.id === 'dual') setPaidBalance(8000);
-      else if (combo.currency.id === 'tickets') { state.tickets = 50; setPaidBalance(0); }
+      else if (combo.currency.id === 'tickets') setPaidBalance(0);
       else setPaidBalance(0);
       prevSlug.current = combo.slug;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [combo.slug]);
 
-  // Seed paid balance on first mount too.
-  useEffect(() => {
-    if (combo.currency.id === 'dual' && paidBalance === 0 && state.totalPulls === 0) {
-      setPaidBalance(8000);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  function addAllFunds() {
+    eng.addFunds(32000);
+    if (combo.currency.id === 'dual') setPaidBalance(p => p + 16000);
+    if (combo.currency.id === 'tickets') { state.tickets += 100; }
+    setFundsFlash(f => f + 1);
+  }
 
   return (
     <div className="page">
@@ -256,7 +253,7 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
 
             <CurrencyBadge currencyId={combo.currency.id} accent={ACCENT} gold={GOLD} />
 
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6 }}>
+            <div key={fundsFlash} style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6, animation: fundsFlash > 0 ? 'fsu-flash 600ms ease-out' : undefined }}>
               <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />
               {combo.currency.id === 'dual' && <Pip label="Paid" value={paidBalance.toLocaleString()} color={GOLD} />}
               {combo.currency.id === 'tickets' && <Pip label="Tickets" value={state.tickets} color={CORAL} />}
@@ -284,8 +281,10 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
               )}
               {usesSpark && <Btn disabled={!eng.canSpark} onClick={eng.spark}>Spark ({state.sparkProgress}/{state.sparkThreshold})</Btn>}
               {usesShards && <Btn disabled={!eng.canShards} onClick={eng.shards}>Craft ({state.shards}/{state.shardsNeededForFive})</Btn>}
-              <Btn onClick={() => { eng.addFunds(); if (combo.currency.id === 'dual') setPaidBalance(p => p + 8000); if (combo.currency.id === 'tickets') state.tickets += 50; }}>+ Funds</Btn>
-              <Btn onClick={() => { eng.reset(); state.stepLength = stepLen; prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); }}>Reset</Btn>
+              <Btn primary onClick={addAllFunds}>
+                + Funds (+32k{combo.currency.id === 'dual' ? ' / +16k paid' : combo.currency.id === 'tickets' ? ' / +100 tickets' : ''})
+              </Btn>
+              <Btn onClick={() => { eng.reset(); prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); }}>Reset</Btn>
             </div>
 
             <div key={eng.pullBurstKey} style={{ marginTop: 16 }}>
@@ -437,6 +436,7 @@ const KF = `
 @keyframes fsu-spin { 0%{transform:rotate(0deg)}100%{transform:rotate(360deg)} }
 @keyframes fsu-ribbon { 0%{transform:translateX(0)}100%{transform:translateX(30vw)} }
 @keyframes fsu-cycle { 0%{transform:translateY(-60px) scale(.8);opacity:0}20%{transform:translateY(0) scale(1);opacity:1}75%{transform:translateY(0) scale(1);opacity:1}100%{transform:translateY(-40px) scale(.95);opacity:0} }
+@keyframes fsu-flash { 0%{box-shadow:0 0 0 1px #FFB6E633, 0 0 0 rgba(255,216,111,0)}40%{box-shadow:0 0 0 2px #FFD86F, 0 0 30px #FFD86F88}100%{box-shadow:0 0 0 1px #FFB6E633, 0 0 0 rgba(255,216,111,0)} }
 `;
 
 // ---------------------------------------------------------------------------
