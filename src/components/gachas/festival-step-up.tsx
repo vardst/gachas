@@ -169,64 +169,42 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
     return out;
   }
 
-  function doStepPull10(wallet: 'free' | 'paid' | 'tickets') {
+  function doStepPull(count: 1 | 10, wallet: 'free' | 'paid' | 'tickets') {
     const stepIdx = state.stepIndex % stepLen;
     const step = STEPS[stepIdx];
-    const engineCost = eng.pullCost * 10;
+    const engineCost = eng.pullCost * count;
     const stepCost = Math.round(engineCost * step.cost);
-    const ticketCost = Math.max(1, Math.round(10 * step.cost));
+    const ticketCost = Math.max(1, Math.round(count * step.cost));
 
-    // Affordability check
     if (wallet === 'free' && state.freeCurrency < stepCost) return;
     if (wallet === 'paid' && paidBalance < stepCost) return;
     if (wallet === 'tickets' && state.tickets < ticketCost) return;
 
-    // Charge the right wallet and compensate the engine's auto-deduction.
     if (wallet === 'free') {
       state.freeCurrency += engineCost - stepCost;
-      eng.pull10();
+      if (count === 10) eng.pull10(); else eng.pull1();
     } else if (wallet === 'paid') {
       setPaidBalance(p => p - stepCost);
       state.freeCurrency += engineCost;
-      eng.pull10();
+      if (count === 10) eng.pull10(); else eng.pull1();
     } else {
       state.tickets -= ticketCost;
       state.freeCurrency += engineCost;
-      eng.pull10();
+      if (count === 10) eng.pull10(); else eng.pull1();
     }
 
-    // Undo engine's 10-step advancement; advance by 1 per batch (step semantics).
+    // Engine advanced stepIndex by `count` pulls; advance by exactly 1 per press.
     state.stepIndex = (stepIdx + 1) % stepLen;
 
-    // Post-process the last 10 entries in history to apply the step's guarantee.
-    const last = state.history.slice(-10);
+    // Post-process last `count` entries to apply the step's guarantee.
+    const last = state.history.slice(-count);
     const modified = applyStepEffects(stepIdx, last);
-    state.history.splice(-10, 10, ...modified);
+    state.history.splice(-count, count, ...modified);
 
-    // Re-sync derived counters so the step-guaranteed 5★ counts correctly.
     state.fiveStarCount = state.history.filter(r => r.rarity === 5).length;
     state.featuredObtained = state.history.filter(r => r.rarity === 5 && r.rateUpHit).length;
 
     setDisplayResults(modified);
-    setUsedDisplay(true);
-  }
-
-  function doSinglePull(wallet: 'free' | 'tickets') {
-    const stepIdx = state.stepIndex % stepLen;
-
-    if (wallet === 'tickets') {
-      if (state.tickets < 1) return;
-      state.tickets -= 1;
-      state.freeCurrency += eng.pullCost;
-      eng.pull1();
-    } else {
-      if (state.freeCurrency < eng.pullCost) return;
-      eng.pull1();
-    }
-
-    // Single pulls don't progress the step cycle; undo engine's +1 advance.
-    state.stepIndex = stepIdx;
-    setDisplayResults(state.history.slice(-1));
     setUsedDisplay(true);
   }
 
@@ -376,7 +354,10 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
               </div>
             </div>
 
-            <CurrencyBadge currencyId={combo.currency.id} accent={ACCENT} gold={GOLD} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <CurrencyBadge currencyId={combo.currency.id} accent={ACCENT} gold={GOLD} />
+              <GuaranteeBadge guaranteeId={combo.guarantee.id} accent={ACCENT} />
+            </div>
 
             <div key={fundsFlash} style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6, animation: fundsFlash > 0 ? 'fsu-flash 600ms ease-out' : undefined }}>
               {combo.currency.id !== 'tickets' && <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />}
@@ -396,30 +377,32 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
               const ticketCost10 = Math.max(1, Math.round(10 * curStepCost));
               const costLabel = curStepCost === 0.5 ? `50% OFF · ${stepCost10.toLocaleString()}` : curStepCost === 10 ? `×10 · ${stepCost10.toLocaleString()}` : stepCost10.toLocaleString();
               const ticketLabel = curStepCost === 0.5 ? `${ticketCost10} tickets (50% OFF)` : curStepCost === 10 ? `${ticketCost10} tickets (×10)` : `${ticketCost10} tickets`;
+              const stepCost1 = Math.round(eng.pullCost * curStepCost);
+              const ticketCost1 = Math.max(1, Math.round(1 * curStepCost));
               return (
                 <div className="pull-row" style={{ gap: 8, flexWrap: 'wrap' }}>
                   {combo.currency.id === 'tickets' ? (
                     <>
                       <Btn
-                        disabled={state.tickets < 1}
-                        onClick={() => doSinglePull('tickets')}
-                      >Pull 1 (ticket) · 1</Btn>
+                        disabled={state.tickets < ticketCost1}
+                        onClick={() => doStepPull(1, 'tickets')}
+                      >Step {curStep + 1} · Pull 1 · {ticketCost1} tkt</Btn>
                       <Btn
                         primary
                         disabled={state.tickets < ticketCost10}
-                        onClick={() => doStepPull10('tickets')}
+                        onClick={() => doStepPull(10, 'tickets')}
                       >Step {curStep + 1} · Pull 10 · {ticketLabel}</Btn>
                     </>
                   ) : (
                     <>
-                      <Btn disabled={state.freeCurrency < eng.pullCost} onClick={() => doSinglePull('free')}>Pull 1 (free) · {eng.pullCost}</Btn>
-                      <Btn primary disabled={state.freeCurrency < stepCost10} onClick={() => doStepPull10('free')}>
+                      <Btn disabled={state.freeCurrency < stepCost1} onClick={() => doStepPull(1, 'free')}>Step {curStep + 1} · Pull 1 (free) · {stepCost1}</Btn>
+                      <Btn primary disabled={state.freeCurrency < stepCost10} onClick={() => doStepPull(10, 'free')}>
                         Step {curStep + 1} · Pull 10 (free) · {costLabel}
                       </Btn>
                       {combo.currency.id === 'dual' && (
                         <Btn
                           disabled={paidBalance < stepCost10}
-                          onClick={() => doStepPull10('paid')}
+                          onClick={() => doStepPull(10, 'paid')}
                         >Step {curStep + 1} · Pull 10 (paid) · {costLabel}</Btn>
                       )}
                     </>
@@ -640,7 +623,7 @@ function CurrencyBadge({ currencyId, accent, gold }: { currencyId: string; accen
   const color = currencyId === 'dual' ? gold : currencyId === 'tickets' ? '#FF8FB1' : accent;
   return (
     <div style={{
-      marginBottom: 12,
+      flex: '1 1 260px',
       padding: '10px 14px',
       background: `linear-gradient(90deg, ${color}22, transparent)`,
       border: `1px solid ${color}66`,
@@ -660,7 +643,37 @@ function CurrencyBadge({ currencyId, accent, gold }: { currencyId: string; accen
         background: color,
         color: '#1f0a14',
       }}>{info.title}</span>
-      <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 180 }}>{info.short}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 140 }}>{info.short}</span>
+    </div>
+  );
+}
+
+function GuaranteeBadge({ guaranteeId, accent }: { guaranteeId: string; accent: string }) {
+  const info = GUARANTEE_COPY[guaranteeId] ?? GUARANTEE_COPY.pure;
+  const color = accent;
+  return (
+    <div style={{
+      flex: '1 1 260px',
+      padding: '10px 14px',
+      background: `linear-gradient(90deg, ${color}22, transparent)`,
+      border: `1px solid ${color}66`,
+      borderRadius: 6,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap',
+    }}>
+      <span style={{
+        padding: '3px 10px',
+        borderRadius: 10,
+        fontSize: 10.5,
+        fontWeight: 800,
+        letterSpacing: 0.1,
+        textTransform: 'uppercase',
+        background: color,
+        color: '#1f0a14',
+      }}>{info.title}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 140 }}>{info.short}</span>
     </div>
   );
 }
