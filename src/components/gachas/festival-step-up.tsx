@@ -130,41 +130,82 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
 
   function applyStepEffects(stepIdx: number, results: PullResult[]): PullResult[] {
     const out = [...results];
+    const isBatch = out.length > 1;
     switch (stepIdx) {
-      case 2: // Step 3 — guaranteed 4★+ in batch
-        if (!out.some(r => r.rarity >= 4)) {
-          const lastIdx = out.length - 1;
-          out[lastIdx] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4, batchFloor: true };
-        }
-        break;
-      case 3: // Step 4 — doubled featured rate (coin-flip each 4/5★ to featured)
-        for (let i = 0; i < out.length; i++) {
-          const r = out[i];
-          if (r.rarity === 5 && !r.rateUpHit && featured.five.length > 0 && Math.random() < 0.5) {
-            out[i] = { ...r, unit: pickFeatured5(), rateUpHit: true };
-          } else if (r.rarity === 4 && featured.four.length > 0 && Math.random() < 0.5) {
-            const f4 = pickFeatured4();
-            if (f4) out[i] = { ...r, unit: f4 };
+      case 2: { // Step 3 — "4★ Guaranteed": every pull is 4★+ for single, ≥ half for 10-pull + one guaranteed
+        if (!isBatch) {
+          // Single pull: promote to 4★ if it was 3★
+          for (let i = 0; i < out.length; i++) {
+            if (out[i].rarity === 3) {
+              out[i] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4, extra: { guarantee: true } };
+            }
+          }
+        } else {
+          // 10-pull: each 3★ has 40% chance to upgrade, plus force at least one 4★+
+          for (let i = 0; i < out.length; i++) {
+            if (out[i].rarity === 3 && Math.random() < 0.4) {
+              out[i] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4, extra: { guarantee: true } };
+            }
+          }
+          if (!out.some(r => r.rarity >= 4)) {
+            const lastIdx = out.length - 1;
+            out[lastIdx] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4, extra: { guarantee: true } };
           }
         }
         break;
-      case 4: // Step 5 — guaranteed featured 5★
+      }
+      case 3: { // Step 4 — "Doubled featured rate": every 4★/5★ becomes featured, 3★s get 20% upgrade
+        for (let i = 0; i < out.length; i++) {
+          const r = out[i];
+          if (r.rarity === 5 && !r.rateUpHit && featured.five.length > 0) {
+            out[i] = { ...r, unit: pickFeatured5(), rateUpHit: true, extra: { rateUp: true } };
+          } else if (r.rarity === 4 && featured.four.length > 0) {
+            const f4 = pickFeatured4();
+            if (f4) out[i] = { ...r, unit: f4, extra: { rateUp: true } };
+          } else if (r.rarity === 3 && Math.random() < 0.2 && featured.four.length > 0) {
+            const f4 = pickFeatured4();
+            if (f4) out[i] = { ...r, unit: f4, rarity: 4, extra: { rateUp: true } };
+          }
+        }
+        break;
+      }
+      case 4: { // Step 5 — "Guaranteed featured 5★": force at least one; promote non-featured 5★s to featured
+        for (let i = 0; i < out.length; i++) {
+          if (out[i].rarity === 5 && !out[i].rateUpHit && featured.five.length > 0) {
+            out[i] = { ...out[i], unit: pickFeatured5(), rateUpHit: true };
+          }
+        }
         if (!out.some(r => r.rarity === 5 && r.rateUpHit)) {
           const lastIdx = out.length - 1;
           out[lastIdx] = { unit: pickFeatured5(), rarity: 5, rateUpHit: true, extra: { stepGuarantee: true } };
         }
         break;
-      case 5: // Step 6 — ×10 price, all 3★ promoted to 4★ (mega haul)
+      }
+      case 5: { // Step 6 — "×10 price, mega haul": ALL 4★+, guaranteed featured 5★, bonus featured 5★ appended
         for (let i = 0; i < out.length; i++) {
           if (out[i].rarity === 3) {
-            out[i] = { unit: pickFeatured4() ?? pickRandom4(), rarity: 4 };
+            const f4 = pickFeatured4();
+            out[i] = { unit: f4 ?? pickRandom4(), rarity: 4, extra: { mega: true } };
           }
         }
+        if (!out.some(r => r.rarity === 5 && r.rateUpHit)) {
+          const lastIdx = out.length - 1;
+          out[lastIdx] = { unit: pickFeatured5(), rarity: 5, rateUpHit: true, extra: { mega: true, stepGuarantee: true } };
+        }
+        if (isBatch) {
+          // Bonus 11th card on 10-pull mega haul
+          out.push({ unit: pickFeatured5(), rarity: 5, rateUpHit: true, extra: { bonusToken: true } });
+        }
         break;
-      case 6: // Step 7 — bonus 4★ token (11th card)
-        out.push({ unit: pickFeatured4() ?? pickRandom4(), rarity: 4, extra: { bonusToken: true } });
+      }
+      case 6: { // Step 7 — "Victory Lap": bonus featured 4★ token
+        const f4 = pickFeatured4() ?? pickRandom4();
+        out.push({ unit: f4, rarity: 4, extra: { bonusToken: true } });
         break;
-      // Step 1, 2, 8 — no result modification (step 1's effect is pure cost)
+      }
+      // Step 1 — pure cost discount, no result mods
+      // Step 2 — normal
+      // Step 8 — normal (cycle-complete banner fires elsewhere)
     }
     return out;
   }
@@ -206,6 +247,67 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
 
     setDisplayResults(modified);
     setUsedDisplay(true);
+
+    // Milestone toasts — fire each only once per session.
+    const fiveHit = modified.find(r => r.rarity === 5);
+    const featHit = modified.find(r => r.rarity === 5 && r.rateUpHit);
+    if (state.totalPulls === count && !milestones.current.firstPull) {
+      milestones.current.firstPull = true;
+      pushToast('First pull!', 'Curtain rising. Good luck.', MINT);
+    }
+    if (fiveHit && !milestones.current.firstFive) {
+      milestones.current.firstFive = true;
+      pushToast('First ★5 get!', fiveHit.unit.name + ' joins the stage.', GOLD);
+    }
+    if (featHit && !milestones.current.firstFeat) {
+      milestones.current.firstFeat = true;
+      pushToast('Oshi unlocked!', 'Your first featured ★5.', CORAL);
+    }
+    if (state.pullsSinceFiveStar >= state.softPityStart && !milestones.current.softPity) {
+      milestones.current.softPity = true;
+      pushToast('Soft pity rising', 'Rate ramping up — a ★5 is close.', LAVENDER);
+    }
+    if (state.sparkProgress >= state.sparkThreshold && !milestones.current.sparkReady) {
+      milestones.current.sparkReady = true;
+      pushToast('Spark available', 'Redeem to pick any featured ★5.', MINT);
+    }
+    if (modified.some(r => r.hardPity) && !milestones.current.pityBroken) {
+      milestones.current.pityBroken = true;
+      pushToast('Pity broken', 'Hard-pity safety net caught you.', ACCENT);
+    }
+    setLastFiveName(fiveHit?.unit.name ?? null);
+  }
+
+  // ----- Milestone toast state -----
+  const milestones = useRef({ firstPull: false, firstFive: false, firstFeat: false, softPity: false, sparkReady: false, pityBroken: false });
+  const [toasts, setToasts] = useState<{ id: number; title: string; body: string; color: string }[]>([]);
+  const toastIdRef = useRef(0);
+  const [lastFiveName, setLastFiveName] = useState<string | null>(null);
+  function pushToast(title: string, body: string, color: string) {
+    const id = ++toastIdRef.current;
+    setToasts(t => [...t, { id, title, body, color }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3800);
+  }
+
+  // ----- Coin burst on + Funds -----
+  const [coinBurst, setCoinBurst] = useState<{ id: number; x: number; rot: number; delay: number; color: string }[]>([]);
+  const coinIdRef = useRef(0);
+  function triggerCoinBurst() {
+    const colors = [GOLD, LEMON, ACCENT, CORAL];
+    const pcs = Array.from({ length: 14 }).map(() => ({
+      id: ++coinIdRef.current,
+      x: 35 + Math.random() * 30,
+      rot: Math.random() * 360,
+      delay: Math.random() * 120,
+      color: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    setCoinBurst(c => [...c, ...pcs]);
+    setTimeout(() => setCoinBurst(c => c.filter(p => !pcs.includes(p))), 1400);
+  }
+
+  function addAllFundsWithBurst() {
+    addAllFunds();
+    triggerCoinBurst();
   }
 
   return (
@@ -244,11 +346,52 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
           </div>
 
           {sparkle && (
-            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 340, height: 340, background: `radial-gradient(circle, ${GOLD}aa 0%, ${ACCENT}55 30%, transparent 70%)`, animation: 'fsu-sparkle 1.8s ease-out forwards' }} />
-              <div style={{ position: 'absolute', fontSize: 92, fontWeight: 900, letterSpacing: 0.1, background: `linear-gradient(90deg, ${GOLD}, ${ACCENT})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', animation: 'fsu-sparkle-text 1.8s ease-out forwards', textShadow: `0 0 40px ${GOLD}` }}>★5</div>
+            <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+              <div style={{ position: 'absolute', width: 340, height: 340, background: `radial-gradient(circle, ${GOLD}aa 0%, ${ACCENT}55 30%, transparent 70%)`, animation: 'fsu-sparkle 1.8s ease-out forwards' }} />
+              <div style={{ position: 'relative', fontSize: 92, fontWeight: 900, letterSpacing: 0.1, background: `linear-gradient(90deg, ${GOLD}, ${ACCENT})`, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', animation: 'fsu-sparkle-text 1.8s ease-out forwards', textShadow: `0 0 40px ${GOLD}` }}>★5</div>
+              {lastFiveName && (
+                <div style={{
+                  position: 'relative', marginTop: -6, fontSize: 28, fontWeight: 800, letterSpacing: 0.3,
+                  color: '#fff', textShadow: `0 0 20px ${GOLD}, 0 0 40px ${ACCENT}`,
+                  animation: 'fsu-name 1.8s ease-out forwards',
+                  fontFamily: '"Georgia", serif', fontStyle: 'italic',
+                }}>{lastFiveName}</div>
+              )}
             </div>
           )}
+
+          {/* Coin burst on + Funds */}
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 3 }}>
+            {coinBurst.map(c => (
+              <div key={c.id} style={{
+                position: 'absolute', left: `${c.x}%`, top: '68%',
+                width: 14, height: 14, borderRadius: '50%',
+                background: `radial-gradient(circle at 30% 30%, #fff 0%, ${c.color} 40%, ${c.color}66 100%)`,
+                boxShadow: `0 0 12px ${c.color}aa`,
+                transform: `rotate(${c.rot}deg)`,
+                animation: 'fsu-coin 1.1s cubic-bezier(0.25, 0.1, 0.25, 1.4) forwards',
+                animationDelay: `${c.delay}ms`,
+              }} />
+            ))}
+          </div>
+
+          {/* Milestone toasts (top-right stack) */}
+          <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 6, display: 'flex', flexDirection: 'column', gap: 6, pointerEvents: 'none', maxWidth: 260 }}>
+            {toasts.map(t => (
+              <div key={t.id} style={{
+                padding: '8px 12px',
+                background: `linear-gradient(90deg, ${t.color}dd, ${t.color}99)`,
+                color: '#1f0a14',
+                borderRadius: 10,
+                boxShadow: `0 6px 20px rgba(0,0,0,0.4), 0 0 24px ${t.color}55`,
+                border: `1px solid ${t.color}`,
+                animation: 'fsu-toast 3.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.12, textTransform: 'uppercase' }}>{t.title}</div>
+                <div style={{ fontSize: 12, marginTop: 2, fontWeight: 500 }}>{t.body}</div>
+              </div>
+            ))}
+          </div>
 
           {cycleFlash !== null && (
             <div style={{ position: 'absolute', top: 0, left: 0, right: 0, pointerEvents: 'none', zIndex: 5, display: 'flex', justifyContent: 'center', paddingTop: 18 }}>
@@ -295,8 +438,9 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
                 {STEPS.map((s, i) => {
                   const isCur = i === curStep;
                   const done = curStep > i;
+                  const stepsAway = i > curStep ? i - curStep : (stepLen - curStep) + i;
                   return (
-                    <div key={i} style={{
+                    <div key={i} title={isCur ? 'Pull now for this step' : stepsAway === 0 ? '' : `In ${stepsAway} ${stepsAway === 1 ? 'pull' : 'pulls'} · ${s.reward}`} style={{
                       position: 'relative', padding: '10px 8px', borderRadius: 8,
                       background: isCur ? `linear-gradient(180deg, ${s.color} 0%, ${s.color}cc 100%)` : done ? `${s.color}22` : 'rgba(255,255,255,0.02)',
                       border: isCur ? `2px solid ${GOLD}` : done ? `1px solid ${s.color}55` : '1px solid rgba(255,255,255,0.08)',
@@ -306,7 +450,12 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
                       transform: isCur ? 'translateY(-3px) scale(1.02)' : 'translateY(0)',
                       transition: 'all 280ms cubic-bezier(0.34, 1.56, 0.64, 1)',
                       minHeight: 96,
-                    }}>
+                      cursor: isCur ? 'default' : 'help',
+                      animation: isCur ? 'fsu-breathe 2.4s ease-in-out infinite' : undefined,
+                    }}
+                    onMouseEnter={(e) => { if (!isCur) { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(-2px)'; (e.currentTarget as HTMLDivElement).style.borderColor = s.color; } }}
+                    onMouseLeave={(e) => { if (!isCur) { (e.currentTarget as HTMLDivElement).style.transform = 'translateY(0)'; (e.currentTarget as HTMLDivElement).style.borderColor = done ? `${s.color}55` : 'rgba(255,255,255,0.08)'; } }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.06 }}>{s.label}</span>
                         <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.1 }}>{s.icon}</span>
@@ -317,6 +466,7 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
                         {s.cost === 1 ? 'x1 price' : s.cost === 0.5 ? '50% OFF' : `×${s.cost} price`}
                       </div>
                       {isCur && <div style={{ position: 'absolute', top: -8, left: '50%', transform: 'translateX(-50%)', padding: '1px 8px', background: GOLD, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800, letterSpacing: 0.1, animation: 'fsu-bounce 1.6s ease-in-out infinite' }}>NOW</div>}
+                      {!isCur && !done && stepsAway <= 2 && <div style={{ position: 'absolute', top: -6, right: 4, padding: '1px 5px', background: 'rgba(0,0,0,0.5)', color: s.color, borderRadius: 8, fontSize: 8.5, fontWeight: 700, letterSpacing: 0.08, border: `1px solid ${s.color}66` }}>in {stepsAway}</div>}
                     </div>
                   );
                 })}
@@ -360,14 +510,14 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
             </div>
 
             <div key={fundsFlash} style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', border: `1px solid ${ACCENT}33`, borderRadius: 6, animation: fundsFlash > 0 ? 'fsu-flash 600ms ease-out' : undefined }}>
-              {combo.currency.id !== 'tickets' && <Pip label="Free" value={state.freeCurrency.toLocaleString()} color={ACCENT} />}
-              {combo.currency.id === 'dual' && <Pip label="Paid" value={paidBalance.toLocaleString()} color={GOLD} />}
-              {combo.currency.id === 'tickets' && <Pip label="Tickets" value={state.tickets} color={CORAL} />}
-              <Pip label="Pulls" value={state.totalPulls} color={LAVENDER} />
-              <Pip label="5★" value={state.fiveStarCount} color={GOLD} />
-              <Pip label="Featured" value={state.featuredObtained} color={CORAL} />
-              {usesSpark && <Pip label="Spark" value={`${state.sparkProgress}/${state.sparkThreshold}`} color={MINT} />}
-              {usesShards && <Pip label="Shards" value={`${state.shards}/${state.shardsNeededForFive}`} color={LEMON} />}
+              {combo.currency.id !== 'tickets' && <Pip label="Free" value={<Odometer value={state.freeCurrency} />} color={ACCENT} />}
+              {combo.currency.id === 'dual' && <Pip label="Paid" value={<Odometer value={paidBalance} />} color={GOLD} />}
+              {combo.currency.id === 'tickets' && <Pip label="Tickets" value={<Odometer value={state.tickets} />} color={CORAL} />}
+              <Pip label="Pulls" value={<Odometer value={state.totalPulls} />} color={LAVENDER} />
+              <Pip label="5★" value={<Odometer value={state.fiveStarCount} />} color={GOLD} />
+              <Pip label="Featured" value={<Odometer value={state.featuredObtained} />} color={CORAL} />
+              {usesSpark && <Pip label="Spark" value={<><Odometer value={state.sparkProgress} />/{state.sparkThreshold}</>} color={MINT} />}
+              {usesShards && <Pip label="Shards" value={<><Odometer value={state.shards} />/{state.shardsNeededForFive}</>} color={LEMON} />}
             </div>
 
             {(() => {
@@ -409,7 +559,7 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
                   )}
                   {usesSpark && <Btn disabled={!eng.canSpark} onClick={eng.spark}>Spark ({state.sparkProgress}/{state.sparkThreshold})</Btn>}
                   {usesShards && <Btn disabled={!eng.canShards} onClick={eng.shards}>Craft ({state.shards}/{state.shardsNeededForFive})</Btn>}
-                  <Btn primary onClick={addAllFunds}>
+                  <Btn primary onClick={addAllFundsWithBurst}>
                     + Funds ({combo.currency.id === 'tickets' ? '+100 tickets' : combo.currency.id === 'dual' ? '+32k free / +16k paid' : '+32k'})
                   </Btn>
                   <Btn onClick={() => { eng.reset(); prevStepIndex.current = 0; setPaidBalance(combo.currency.id === 'dual' ? 8000 : 0); setDisplayResults([]); setUsedDisplay(false); }}>Reset</Btn>
@@ -425,18 +575,25 @@ export default function FestivalStepUp({ slug }: { slug: string }) {
                 }
                 return (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10 }}>
-                    {shown.map((r, i) => (
-                      <FCard
-                        key={i}
-                        rarity={r.rarity}
-                        name={r.unit.name}
-                        color={r.unit.color}
-                        rateUpHit={!!r.rateUpHit}
-                        bonusToken={!!(r.extra && (r.extra as { bonusToken?: boolean }).bonusToken)}
-                        stepGuarantee={!!(r.extra && (r.extra as { stepGuarantee?: boolean }).stepGuarantee)}
-                        delay={i * 55}
-                      />
-                    ))}
+                    {shown.map((r, i) => {
+                      const extra = r.extra as { bonusToken?: boolean; stepGuarantee?: boolean; guarantee?: boolean; rateUp?: boolean; mega?: boolean } | undefined;
+                      return (
+                        <FCard
+                          key={i}
+                          rarity={r.rarity}
+                          name={r.unit.name}
+                          color={r.unit.color}
+                          image={r.unit.image}
+                          rateUpHit={!!r.rateUpHit}
+                          bonusToken={!!extra?.bonusToken}
+                          stepGuarantee={!!extra?.stepGuarantee}
+                          guarantee={!!extra?.guarantee}
+                          rateUp={!!extra?.rateUp}
+                          mega={!!extra?.mega}
+                          delay={i * 55}
+                        />
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -493,7 +650,7 @@ function Ribbons({ rkey }: { rkey: number }) {
   );
 }
 
-function Pip({ label, value, color }: { label: string; value: string | number; color: string }) {
+function Pip({ label, value, color }: { label: string; value: React.ReactNode; color: string }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
       <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.1, color: 'var(--text-muted)' }}>{label}</span>
@@ -502,48 +659,137 @@ function Pip({ label, value, color }: { label: string; value: string | number; c
   );
 }
 
+// Odometer — smoothly rolls a number from its previous value to the new one.
+function Odometer({ value, duration = 480 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(value);
+  const fromRef = useRef(value);
+  const startRef = useRef(0);
+  useEffect(() => {
+    if (value === display) return;
+    fromRef.current = display;
+    startRef.current = performance.now();
+    let raf = 0;
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - startRef.current) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const v = Math.round(fromRef.current + (value - fromRef.current) * eased);
+      setDisplay(v);
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return <>{display.toLocaleString()}</>;
+}
+
 function Btn({ children, onClick, disabled, primary }: { children: React.ReactNode; onClick?: () => void; disabled?: boolean; primary?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{
-      padding: '10px 18px',
-      background: primary ? `linear-gradient(90deg, ${CORAL}, ${ACCENT}, ${LAVENDER})` : 'rgba(255,182,230,0.08)',
-      backgroundSize: primary ? '200% 100%' : undefined,
-      color: primary ? '#1f0a14' : ACCENT,
-      border: primary ? `1px solid ${GOLD}` : `1px solid ${ACCENT}55`,
-      borderRadius: 20, fontWeight: 700, fontSize: 12.5, letterSpacing: 0.03,
-      cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.4 : 1,
-      boxShadow: primary ? `0 0 20px ${ACCENT}66, 0 4px 12px rgba(0,0,0,0.4)` : 'none',
-      animation: primary && !disabled ? 'fsu-btn 3s linear infinite' : undefined,
-    }}>{children}</button>
+    <button
+      className={primary ? 'fsu-btn fsu-btn--primary' : 'fsu-btn fsu-btn--secondary'}
+      onClick={onClick}
+      disabled={disabled}
+    >{children}</button>
   );
 }
 
-function FCard({ rarity, name, color, rateUpHit, delay, bonusToken, stepGuarantee }: { rarity: number; name: string; color: string; rateUpHit: boolean; delay: number; bonusToken?: boolean; stepGuarantee?: boolean }) {
-  const bg = rarity === 5 ? `linear-gradient(135deg, ${color} 0%, ${GOLD} 50%, ${ACCENT} 100%)` : rarity === 4 ? `linear-gradient(135deg, ${color} 0%, ${LAVENDER} 100%)` : `linear-gradient(135deg, ${color} 0%, #4a4a54 100%)`;
+function FCard({ rarity, name, color, image, rateUpHit, delay, bonusToken, stepGuarantee, guarantee, rateUp, mega }: { rarity: number; name: string; color: string; image: string; rateUpHit: boolean; delay: number; bonusToken?: boolean; stepGuarantee?: boolean; guarantee?: boolean; rateUp?: boolean; mega?: boolean }) {
+  const frameGrad = rarity === 5 ? `linear-gradient(180deg, ${GOLD} 0%, ${color} 50%, ${ACCENT} 100%)` : rarity === 4 ? `linear-gradient(180deg, ${LAVENDER}cc 0%, ${color}cc 100%)` : `linear-gradient(180deg, #5a5a64 0%, ${color}99 100%)`;
+  const isFive = rarity === 5;
   return (
     <div style={{
-      position: 'relative', aspectRatio: '4 / 5', borderRadius: 10, background: bg,
-      border: rarity === 5 ? `2px solid ${GOLD}` : rarity === 4 ? `1px solid ${LAVENDER}` : '1px solid rgba(255,255,255,0.1)',
-      boxShadow: rarity === 5 ? `0 0 20px ${color}aa, 0 0 42px ${GOLD}66` : '0 2px 8px rgba(0,0,0,0.4)',
-      padding: 10, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-      animation: 'fsu-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both', animationDelay: `${delay}ms`,
+      position: 'relative', aspectRatio: '4 / 5', borderRadius: 10,
+      background: frameGrad,
+      border: isFive ? `3px solid ${GOLD}` : rarity === 4 ? `1px solid ${LAVENDER}` : '1px solid rgba(255,255,255,0.15)',
+      boxShadow: isFive ? `0 0 22px ${color}cc, 0 0 48px ${GOLD}88, inset 0 0 20px rgba(255,255,255,0.25)` : rarity === 4 ? `0 0 14px ${LAVENDER}55, 0 2px 8px rgba(0,0,0,0.4)` : '0 2px 8px rgba(0,0,0,0.4)',
+      padding: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      animation: isFive ? `fsu-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both, fsu-five-glow 2.8s ease-in-out infinite ${delay + 400}ms` : 'fsu-pop 480ms cubic-bezier(0.34, 1.56, 0.64, 1) both',
+      animationDelay: isFive ? undefined : `${delay}ms`,
       overflow: 'hidden',
     }}>
+      {/* Halo backdrop (5★ only) */}
+      {isFive && (
+        <div style={{ position: 'absolute', inset: -10, background: `radial-gradient(circle at 50% 40%, ${GOLD}55 0%, ${color}33 40%, transparent 70%)`, animation: 'fsu-pulse 3s ease-in-out infinite', pointerEvents: 'none', zIndex: 0 }} />
+      )}
+      {/* Portrait layer */}
+      <img
+        src={image}
+        alt={name}
+        style={{
+          position: 'absolute', inset: 0, width: '100%', height: '100%',
+          objectFit: 'cover', objectPosition: isFive ? 'center 30%' : 'top',
+          opacity: isFive ? 1 : 0.95,
+          transform: isFive ? 'scale(1.06)' : 'none',
+          filter: isFive ? `drop-shadow(0 0 10px ${color}88)` : undefined,
+          zIndex: 1,
+        }}
+        loading="lazy"
+      />
+      {/* Color wash */}
+      <div style={{ position: 'absolute', inset: 0, background: `linear-gradient(180deg, transparent 0%, transparent 55%, ${color}dd 100%)`, zIndex: 2 }} />
+      {/* Shine sweep — only 5★ */}
+      {isFive && (
+        <div style={{
+          position: 'absolute', top: 0, bottom: 0, width: '35%',
+          background: 'linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.6) 50%, transparent 100%)',
+          animation: 'fsu-shine 3.2s ease-in-out infinite',
+          mixBlendMode: 'overlay', pointerEvents: 'none', zIndex: 3,
+        }} />
+      )}
+      {/* Conic rotating highlight */}
       {rarity >= 4 && (
         <div style={{
           position: 'absolute', top: -30, left: -30, right: -30, bottom: -30,
-          background: 'conic-gradient(from 0deg, transparent 0deg, rgba(255,255,255,0.25) 60deg, transparent 120deg, transparent 240deg, rgba(255,255,255,0.25) 300deg, transparent 360deg)',
-          animation: rarity === 5 ? 'fsu-spin 4s linear infinite' : 'fsu-spin 8s linear infinite',
-          mixBlendMode: 'overlay',
+          background: 'conic-gradient(from 0deg, transparent 0deg, rgba(255,255,255,0.25) 60deg, transparent 120deg, transparent 240deg, rgba(255,255,255,0.22) 300deg, transparent 360deg)',
+          animation: isFive ? 'fsu-spin 4s linear infinite' : 'fsu-spin 10s linear infinite',
+          mixBlendMode: 'overlay', pointerEvents: 'none', zIndex: 2,
         }} />
       )}
-      <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end' }}>
+      {/* Sparkle motes — only 5★ */}
+      {isFive && (
+        <>
+          {[0, 1, 2, 3, 4, 5].map(i => (
+            <div key={i} style={{
+              position: 'absolute',
+              left: `${10 + (i * 13 + 5) % 80}%`,
+              top: `${15 + (i * 19 + 7) % 70}%`,
+              width: 6, height: 6, borderRadius: '50%',
+              background: i % 2 === 0 ? GOLD : '#fff',
+              boxShadow: `0 0 8px ${i % 2 === 0 ? GOLD : '#fff'}`,
+              animation: `fsu-twinkle ${2 + (i * 0.3)}s ease-in-out infinite`,
+              animationDelay: `${i * 0.25}s`,
+              zIndex: 3, pointerEvents: 'none',
+            }} />
+          ))}
+        </>
+      )}
+      <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-end', zIndex: 4 }}>
         {rateUpHit && rarity === 5 && <div style={{ padding: '1px 6px', background: GOLD, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>FEATURED</div>}
         {stepGuarantee && <div style={{ padding: '1px 6px', background: CORAL, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>STEP 5</div>}
+        {guarantee && <div style={{ padding: '1px 6px', background: LAVENDER, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>GUARANTEE</div>}
+        {rateUp && <div style={{ padding: '1px 6px', background: LEMON, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>RATE UP</div>}
+        {mega && <div style={{ padding: '1px 6px', background: '#FF8CC3', color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>MEGA</div>}
         {bonusToken && <div style={{ padding: '1px 6px', background: MINT, color: '#1f0a14', borderRadius: 10, fontSize: 9, fontWeight: 800 }}>BONUS</div>}
       </div>
-      <div style={{ fontSize: 12, fontWeight: 800, color: '#0f0e13', position: 'relative' }}>★{rarity}</div>
-      <div style={{ fontSize: 13, fontWeight: 800, color: '#0f0e13', position: 'relative' }}>{name}</div>
+      <div style={{
+        position: 'absolute', top: 6, left: 6,
+        padding: isFive ? '3px 9px' : '2px 7px',
+        background: isFive ? `linear-gradient(90deg, ${GOLD}, ${color})` : 'rgba(0,0,0,0.65)',
+        color: isFive ? '#1f0a14' : rarity === 4 ? '#fff' : '#ddd',
+        borderRadius: 10, fontSize: isFive ? 12 : 10, fontWeight: 900, letterSpacing: 0.12, zIndex: 4,
+        boxShadow: isFive ? `0 0 10px ${GOLD}cc` : undefined,
+        textShadow: isFive ? undefined : 'none',
+      }}>★{rarity}</div>
+      <div style={{
+        position: 'relative', zIndex: 4,
+        padding: isFive ? '10px 12px 14px' : '8px 10px 10px',
+        fontSize: isFive ? 17 : 14,
+        fontWeight: 800, color: '#fff',
+        textShadow: isFive ? `0 1px 4px rgba(0,0,0,0.85), 0 0 18px ${GOLD}66` : '0 1px 3px rgba(0,0,0,0.7)',
+        letterSpacing: isFive ? 0.4 : 0.2,
+        fontFamily: isFive ? '"Georgia", serif' : undefined,
+        fontStyle: isFive ? 'italic' : undefined,
+      }}>{name}</div>
     </div>
   );
 }
@@ -581,11 +827,103 @@ const KF = `
 @keyframes fsu-pop { 0%{transform:scale(.4) translateY(20px);opacity:0}100%{transform:scale(1) translateY(0);opacity:1} }
 @keyframes fsu-bounce { 0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-2px)} }
 @keyframes fsu-slide { 0%,100%{background-position:0% 50%}50%{background-position:100% 50%} }
-@keyframes fsu-btn { 0%{background-position:0% 50%}100%{background-position:200% 50%} }
+/* Button base */
+.fsu-btn {
+  padding: 10px 18px;
+  border-radius: 20px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  border: 1px solid transparent;
+  position: relative;
+  overflow: hidden;
+  will-change: transform, box-shadow;
+  transition:
+    transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 200ms ease-out,
+    background 200ms ease-out,
+    border-color 200ms ease-out,
+    color 180ms ease-out,
+    filter 200ms ease-out;
+}
+.fsu-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--px,50%) var(--py,50%), rgba(255,255,255,0.35), transparent 55%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+.fsu-btn:hover:not(:disabled)::after { opacity: 1; }
+.fsu-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  filter: saturate(0.35) brightness(0.85);
+  animation: none !important;
+  transform: none !important;
+}
+
+/* Primary — cyclic rainbow that actually cycles */
+.fsu-btn--primary {
+  color: #1f0a14;
+  background: linear-gradient(90deg, #FF8F9E 0%, #FFD86F 25%, #FFB6E6 50%, #C4A6FF 75%, #FF8F9E 100%);
+  background-size: 300% 100%;
+  background-position: 0% 50%;
+  border: 1px solid #FFD86F;
+  box-shadow: 0 0 16px rgba(255,182,230,0.35), 0 4px 14px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.5);
+  animation: fsu-btn-shift 9s linear infinite;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+}
+.fsu-btn--primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 0 30px rgba(255,216,111,0.6), 0 10px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.6);
+  filter: brightness(1.08) saturate(1.1);
+  animation-duration: 3.5s;
+}
+.fsu-btn--primary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: 0 0 10px rgba(255,182,230,0.5), 0 2px 6px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.35);
+  filter: brightness(0.95);
+  transition-duration: 70ms;
+}
+
+/* Secondary — ghost with pink hover fill */
+.fsu-btn--secondary {
+  background: linear-gradient(180deg, rgba(255,182,230,0.12), rgba(255,182,230,0.04));
+  color: #FFB6E6;
+  border: 1px solid rgba(255,182,230,0.35);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset, 0 2px 6px rgba(0,0,0,0.2);
+}
+.fsu-btn--secondary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: linear-gradient(180deg, rgba(255,182,230,0.28), rgba(255,182,230,0.12));
+  border-color: #FFB6E6;
+  color: #fff;
+  box-shadow: 0 0 20px rgba(255,182,230,0.35), 0 6px 14px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.1);
+}
+.fsu-btn--secondary:active:not(:disabled) {
+  transform: translateY(1px) scale(0.97);
+  background: rgba(255,182,230,0.1);
+  transition-duration: 70ms;
+}
+
+@keyframes fsu-btn-shift { 0%{background-position:0% 50%}100%{background-position:300% 50%} }
 @keyframes fsu-spin { 0%{transform:rotate(0deg)}100%{transform:rotate(360deg)} }
 @keyframes fsu-ribbon { 0%{transform:translateX(0)}100%{transform:translateX(30vw)} }
 @keyframes fsu-cycle { 0%{transform:translateY(-60px) scale(.8);opacity:0}20%{transform:translateY(0) scale(1);opacity:1}75%{transform:translateY(0) scale(1);opacity:1}100%{transform:translateY(-40px) scale(.95);opacity:0} }
 @keyframes fsu-flash { 0%{box-shadow:0 0 0 1px #FFB6E633, 0 0 0 rgba(255,216,111,0)}40%{box-shadow:0 0 0 2px #FFD86F, 0 0 30px #FFD86F88}100%{box-shadow:0 0 0 1px #FFB6E633, 0 0 0 rgba(255,216,111,0)} }
+@keyframes fsu-coin { 0%{transform:translateY(0) rotate(0deg) scale(.4);opacity:0}25%{transform:translateY(-120px) rotate(180deg) scale(1.05);opacity:1}100%{transform:translateY(40px) rotate(540deg) scale(.7);opacity:0} }
+@keyframes fsu-toast { 0%{transform:translateX(140%) scale(.95);opacity:0}10%{transform:translateX(0) scale(1);opacity:1}88%{transform:translateX(0) scale(1);opacity:1}100%{transform:translateX(20%) scale(.98);opacity:0} }
+@keyframes fsu-name { 0%{transform:translateY(24px);opacity:0;letter-spacing:1.2em}30%{transform:translateY(0);opacity:1;letter-spacing:.3em}70%{transform:translateY(0);opacity:1;letter-spacing:.3em}100%{transform:translateY(-14px);opacity:0;letter-spacing:.4em} }
+@keyframes fsu-breathe { 0%,100%{transform:translateY(-3px) scale(1.02)}50%{transform:translateY(-4px) scale(1.035)} }
+@keyframes fsu-five-glow { 0%,100%{box-shadow:0 0 22px var(--fc),0 0 48px #FFD86F88,inset 0 0 20px rgba(255,255,255,.25)}50%{box-shadow:0 0 32px var(--fc),0 0 64px #FFD86Fcc,inset 0 0 30px rgba(255,255,255,.35)} }
+@keyframes fsu-pulse { 0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.06)} }
+@keyframes fsu-shine { 0%{transform:translateX(-150%) skewX(-20deg);opacity:0}20%{opacity:1}60%{transform:translateX(350%) skewX(-20deg);opacity:0}100%{transform:translateX(350%) skewX(-20deg);opacity:0} }
+@keyframes fsu-twinkle { 0%,100%{opacity:0;transform:scale(.5)}50%{opacity:1;transform:scale(1.2)} }
 `;
 
 // ---------------------------------------------------------------------------

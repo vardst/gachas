@@ -1,5 +1,5 @@
-// Abstract no-art token roster. Tokens are colored rarity tiers.
-// Units have a name, rarity, and color — no portraits.
+// Unit roster with procedural portrait art.
+// Portraits are DiceBear 'lorelei' SVGs stored under /public/images/roster/<id>.svg.
 
 export type Rarity = 3 | 4 | 5;
 
@@ -8,10 +8,15 @@ export interface Unit {
   name: string;
   rarity: Rarity;
   color: string;
+  image: string;
 }
 
 function mk(id: string, name: string, rarity: Rarity, color: string): Unit {
-  return { id, name, rarity, color };
+  return { id, name, rarity, color, image: `/images/roster/${id}.svg` };
+}
+
+export function bannerImage(bannerId: string): string {
+  return `/images/banners/${bannerId}.jpg`;
 }
 
 export const roster: Unit[] = [
